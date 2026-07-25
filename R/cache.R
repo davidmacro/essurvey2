@@ -53,18 +53,23 @@ ess_cache_dir <- function(create = FALSE) {
   dir
 }
 
+# The part of a cache file name that identifies the data file, with anything
+# awkward in a path replaced. Kept separate from ess_cache_key() because
+# ess_cache_clear() matches on it.
+ess_cache_stem <- function(doi) {
+  parts <- ess_parse_doi(doi)
+  gsub("[^A-Za-z0-9._-]+", "-", paste0(parts$prefix, "_", parts$suffix))
+}
+
 # A cache file name identifies exactly what was downloaded: the same DOI in a
 # different format, or with a different missing-value treatment, is a different
 # file.
 ess_cache_key <- function(doi, format = "parquet", recode_missings = TRUE) {
-  parts <- ess_parse_doi(doi)
   format <- ess_check_format(format)
   ess_check_bool(recode_missings, "recode_missings")
 
-  stem <- gsub("[^A-Za-z0-9._-]+", "-", paste0(parts$prefix, "_", parts$suffix))
-
   paste0(
-    stem,
+    ess_cache_stem(doi),
     if (recode_missings) "__recoded" else "__raw",
     ".", ess_format_ext[[format]]
   )
@@ -159,9 +164,10 @@ ess_cache_clear <- function(doi = NULL, confirm = interactive()) {
   cached <- ess_cache_list()
 
   if (!is.null(doi)) {
-    parts <- ess_parse_doi(doi)
-    stem <- gsub("[^A-Za-z0-9._-]+", "-", paste0(parts$prefix, "_", parts$suffix))
-    cached <- cached[startsWith(cached$file, stem)]
+    # Match the whole stem, up to the marker that separates it from the format
+    # and missing-value suffix. Without the marker, clearing ess6e02_6 would
+    # also delete ess6e02_60.
+    cached <- cached[startsWith(cached$file, paste0(ess_cache_stem(doi), "__"))]
   }
 
   if (nrow(cached) == 0L) {

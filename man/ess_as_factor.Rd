@@ -50,8 +50,12 @@ Only variables with a code list are converted; continuous ones such as \code{age
 and identifiers such as \code{idno} are left alone. Codes flagged as missing
 become \code{NA} rather than a factor level, unless \code{keep_missing = TRUE}.
 
+Columns that are already factors are left alone too, and reported. A factor
+holds labels rather than codes, so there is nothing left to look up.
+
 Like \code{\link[=ess_recode_missings]{ess_recode_missings()}}, this modifies \code{dt} \strong{by reference}. Pass
-\code{data.table::copy(dt)} if you want to keep the codes.
+\code{data.table::copy(dt)} if you want to keep the codes. Because of that, the
+call is idempotent: running it twice converts each column once.
 }
 \examples{
 \dontrun{

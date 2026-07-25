@@ -107,6 +107,38 @@ test_that("ess_cache_clear() removes everything, or just one DOI", {
   })
 })
 
+test_that("clearing one DOI does not take a file whose suffix extends it", {
+  dir <- withr::local_tempdir()
+
+  withr::with_options(list(essurvey2.cache_dir = dir), {
+    short <- file.path(dir, ess_cache_key("10.21338/ess6e02_6"))
+    long <- file.path(dir, ess_cache_key("10.21338/ess6e02_60"))
+    writeBin(raw(10), short)
+    writeBin(raw(10), long)
+
+    n <- ess_cache_clear("10.21338/ess6e02_6", confirm = FALSE)
+    expect_equal(n, 1L)
+    expect_false(file.exists(short))
+    expect_true(file.exists(long))
+  })
+})
+
+test_that("every format and missing-value variant of one DOI is cleared together", {
+  dir <- withr::local_tempdir()
+
+  withr::with_options(list(essurvey2.cache_dir = dir), {
+    for (key in c(
+      ess_cache_key("10.21338/ess11e04_2"),
+      ess_cache_key("10.21338/ess11e04_2", recode_missings = FALSE),
+      ess_cache_key("10.21338/ess11e04_2", format = "csv")
+    )) {
+      writeBin(raw(10), file.path(dir, key))
+    }
+
+    expect_equal(ess_cache_clear("10.21338/ess11e04_2", confirm = FALSE), 3L)
+  })
+})
+
 test_that("clearing an empty cache is a no-op, not an error", {
   withr::with_options(list(essurvey2.cache_dir = withr::local_tempdir()), {
     expect_equal(ess_cache_clear(confirm = FALSE), 0L)

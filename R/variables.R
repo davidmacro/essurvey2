@@ -157,48 +157,49 @@ ess_variables <- function(round = NULL,
     cache = cache
   )
 
-  groups <- data$search$dataFileMetadata$variableGroups
-
-  rows <- list()
-
+  # One table per group covering all of its variables at once, and NULL for a
+  # subtree that has none. Returning the tables beats accumulating them in the
+  # enclosing frame with `<<-`: an integrated file has 700-odd variables, and a
+  # single-row data.table each was the dominant cost of this function.
   collect <- function(group) {
-    group_name <- ess_en(group$name)
-    group_label <- ess_en(group$label)
+    vars <- group$variables
 
-    for (v in group$variables) {
-      rows[[length(rows) + 1L]] <<- data.table::data.table(
-        variable_name = ess_en(v$name),
-        variable_label = ess_en(v$label),
-        group_name = group_name,
-        group_label = group_label,
-        role = ess_en(v$role),
-        variable_id = ess_chr(v$id),
-        variable_version = ess_int(v$version)
+    here <- if (length(vars) == 0L) {
+      NULL
+    } else {
+      data.table::data.table(
+        variable_name = vapply(vars, function(v) ess_en(v$name), character(1)),
+        variable_label = vapply(vars, function(v) ess_en(v$label), character(1)),
+        group_name = ess_en(group$name),
+        group_label = ess_en(group$label),
+        role = vapply(vars, function(v) ess_en(v$role), character(1)),
+        variable_id = vapply(vars, function(v) ess_chr(v$id), character(1)),
+        variable_version = vapply(vars, function(v) ess_int(v$version), integer(1))
       )
     }
 
     # Variable groups nest one level in the catalogue's own query; follow
     # whatever depth is returned rather than assuming.
-    for (sub in group$variableGroups) {
-      collect(sub)
+    parts <- c(list(here), lapply(group$variableGroups, collect))
+    parts <- parts[!vapply(parts, is.null, logical(1))]
+
+    if (length(parts) == 0L) {
+      return(NULL)
     }
+
+    data.table::rbindlist(parts, use.names = TRUE, fill = TRUE)
   }
 
-  for (g in groups) {
-    collect(g)
-  }
-
-  proto <- data.table::data.table(
-    variable_name = character(), variable_label = character(),
-    group_name = character(), group_label = character(), role = character(),
-    variable_id = character(), variable_version = integer()
+  out <- ess_rows_to_dt(
+    data$search$dataFileMetadata$variableGroups,
+    collect,
+    data.table::data.table(
+      variable_name = character(), variable_label = character(),
+      group_name = character(), group_label = character(), role = character(),
+      variable_id = character(), variable_version = integer()
+    )
   )
 
-  if (length(rows) == 0L) {
-    return(proto)
-  }
-
-  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   unique(out, by = "variable_name")[]
 }
 

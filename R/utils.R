@@ -56,23 +56,28 @@ ess_user_agent <- function() {
 }
 
 # Format a byte count the way a download progress message should read.
+#
+# sprintf() per unit rather than format(): format() pads a vector to a common
+# width, so a mixed batch would come back as "  2.0 KB" alongside "512.5 KB".
 ess_format_bytes <- function(bytes) {
   bytes <- as.numeric(bytes)
-  out <- character(length(bytes))
-  for (i in seq_along(bytes)) {
-    b <- bytes[[i]]
-    out[[i]] <- if (is.na(b)) {
-      NA_character_
-    } else if (b < 1024) {
-      paste0(b, " B")
-    } else if (b < 1024^2) {
-      paste0(format(round(b / 1024, 1), nsmall = 1), " KB")
-    } else if (b < 1024^3) {
-      paste0(format(round(b / 1024^2, 1), nsmall = 1), " MB")
-    } else {
-      paste0(format(round(b / 1024^3, 2), nsmall = 2), " GB")
-    }
+  out <- rep(NA_character_, length(bytes))
+
+  ok <- which(!is.na(bytes))
+  if (length(ok) == 0L) {
+    return(out)
   }
+
+  b <- bytes[ok]
+  tier <- findInterval(b, c(1024, 1024^2, 1024^3)) + 1L
+
+  out[ok] <- data.table::fcase(
+    tier == 1L, paste0(b, " B"),
+    tier == 2L, sprintf("%.1f KB", b / 1024),
+    tier == 3L, sprintf("%.1f MB", b / 1024^2),
+    tier == 4L, sprintf("%.2f GB", b / 1024^3)
+  )
+
   out
 }
 
@@ -100,8 +105,8 @@ ess_file_kinds_chr <- c(
   "sample_design"
 )
 
-# Map a label tag to a kind, falling back to the lower-cased tag for a
-# questionnaire this package has not seen before.
+# Map label tags to kinds, falling back to the lower-cased tag for a
+# questionnaire this package has not seen before. Vectorised over `tag`.
 # A tag that is not a known questionnaire abbreviation, but is exactly two
 # upper-case letters, is an ISO country code: the ESS publishes supplementary
 # files for countries held out of an integrated file. Deciding by exclusion
@@ -109,14 +114,14 @@ ess_file_kinds_chr <- c(
 # appears; the cost is that a future two-letter questionnaire abbreviation would
 # have to be added to ess_file_tags to avoid being read as a country.
 ess_tag_to_kind <- function(tag) {
-  i <- match(tag, ess_file_tags)
-  if (!is.na(i)) {
-    return(ess_file_kinds_chr[[i]])
-  }
-  if (grepl("^[A-Z]{2}$", tag)) {
-    return("country")
-  }
-  tolower(tag)
+  out <- ess_file_kinds_chr[match(tag, ess_file_tags)]
+
+  unknown <- !is.na(tag) & is.na(out)
+  out[unknown] <- data.table::fifelse(
+    grepl("^[A-Z]{2}$", tag[unknown]), "country", tolower(tag[unknown])
+  )
+
+  out
 }
 
 # Real ESS labels come in three shapes, and the edition marker is written
@@ -130,48 +135,63 @@ ess_parse_file_label <- function(label) {
   label <- as.character(label)
   n <- length(label)
 
-  out <- data.table::data.table(
-    file_label = label,
-    round = rep(NA_integer_, n),
-    file_tag = rep(NA_character_, n),
-    file_kind = rep(NA_character_, n),
-    file_country = rep(NA_character_, n),
-    edition = rep(NA_character_, n)
-  )
-
   edition_re <- "^ESS([0-9]+)([A-Z]*)_?ed?([0-9]+)(?:_([0-9]+))?$"
   country_re <- "^ESS([0-9]+)([A-Z]{2})$"
 
-  with_edition <- regmatches(label, regexec(edition_re, label))
-  no_edition <- regmatches(label, regexec(country_re, label))
-
-  for (i in seq_len(n)) {
-    g <- with_edition[[i]]
-
-    if (length(g) >= 4L) {
-      out$round[[i]] <- as.integer(g[[2L]])
-      tag <- g[[3L]]
-      major <- as.integer(g[[4L]])
-      minor <- if (length(g) >= 5L && nzchar(g[[5L]])) as.integer(g[[5L]]) else 0L
-      out$edition[[i]] <- paste0(major, ".", minor)
-    } else {
-      g <- no_edition[[i]]
-      if (length(g) < 3L) {
-        next
-      }
-      out$round[[i]] <- as.integer(g[[2L]])
-      tag <- g[[3L]]
+  # Stack the per-label match vectors into a character matrix, so each capture
+  # group can be read off as a column and the whole table built in one pass.
+  # A trailing group that did not participate may be absent rather than empty,
+  # hence `least` (how much of a match counts) alongside `width`.
+  groups <- function(re, least, width) {
+    m <- regmatches(label, regexec(re, label))
+    hit <- lengths(m) >= least
+    out <- matrix(NA_character_, nrow = n, ncol = width)
+    if (any(hit)) {
+      out[hit, ] <- do.call(rbind, lapply(m[hit], function(g) {
+        length(g) <- width
+        g
+      }))
     }
-
-    out$file_tag[[i]] <- tag
-    kind <- ess_tag_to_kind(tag)
-    out$file_kind[[i]] <- kind
-    if (kind == "country") {
-      out$file_country[[i]] <- tag
-    }
+    out
   }
 
-  out
+  ed <- groups(edition_re, 4L, 5L) # label, round, tag, major, minor
+  ct <- groups(country_re, 3L, 3L) # label, round, tag
+
+  # A label with an edition wins; the country shape is only consulted for the
+  # labels the first regex could not read at all.
+  has_ed <- !is.na(ed[, 1L])
+  has_ct <- !has_ed & !is.na(ct[, 1L])
+
+  round <- rep(NA_integer_, n)
+  round[has_ed] <- as.integer(ed[has_ed, 2L])
+  round[has_ct] <- as.integer(ct[has_ct, 2L])
+
+  tag <- rep(NA_character_, n)
+  tag[has_ed] <- ed[has_ed, 3L]
+  tag[has_ct] <- ct[has_ct, 3L]
+
+  # An absent or empty minor marker means edition x.0.
+  minor <- ed[, 5L]
+  minor[is.na(minor) | !nzchar(minor)] <- "0"
+
+  edition <- rep(NA_character_, n)
+  edition[has_ed] <- paste0(
+    as.integer(ed[has_ed, 4L]), ".", as.integer(minor[has_ed])
+  )
+
+  kind <- ess_tag_to_kind(tag)
+
+  data.table::data.table(
+    file_label = label,
+    round = round,
+    file_tag = tag,
+    file_kind = kind,
+    file_country = data.table::fifelse(
+      !is.na(kind) & kind == "country", tag, NA_character_
+    ),
+    edition = edition
+  )
 }
 
 #' Data file kinds
@@ -276,12 +296,39 @@ ess_check_rounds <- function(rounds, available = NULL, call = rlang::caller_env(
   out
 }
 
-# Convert a nested GraphQL list into a data.table, one row per element, using a
-# row-builder function. Returns a zero-row table with the right columns when
-# the input is empty, so downstream data.table code never has to special-case.
+# Convert a nested GraphQL list into a data.table using a row-builder function,
+# which may return any number of rows per element -- or NULL for an element that
+# yields none. Returns a zero-row table with the right columns when nothing
+# survives, so downstream data.table code never has to special-case.
+#
+# This is the one place the package turns catalogue lists into tables: building a
+# single-row data.table per row and appending it to a list costs thousands of
+# allocations on a full round, so builders return one table per element instead.
 ess_rows_to_dt <- function(x, builder, prototype) {
   if (is.null(x) || length(x) == 0L) {
     return(prototype)
   }
-  data.table::rbindlist(lapply(x, builder), fill = TRUE, use.names = TRUE)
+
+  rows <- lapply(x, builder)
+  rows <- rows[!vapply(rows, is.null, logical(1))]
+
+  if (length(rows) == 0L) {
+    return(prototype)
+  }
+
+  data.table::rbindlist(rows, fill = TRUE, use.names = TRUE)
+}
+
+# Escape a string for interpolation into a GraphQL string literal. The aliased
+# batch queries are built with sprintf(), and ess_data_file_info() takes its IDs
+# from the caller, so an unescaped quote would otherwise let a caller inject
+# arbitrary fields into the query document.
+ess_gql_string <- function(x) {
+  x <- as.character(x)
+  x <- gsub("\\", "\\\\", x, fixed = TRUE)
+  x <- gsub('"', '\\"', x, fixed = TRUE)
+  x <- gsub("\n", "\\n", x, fixed = TRUE)
+  x <- gsub("\r", "\\r", x, fixed = TRUE)
+  x <- gsub("\t", "\\t", x, fixed = TRUE)
+  paste0('"', x, '"')
 }

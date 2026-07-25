@@ -81,36 +81,38 @@ ess_codes_dt <- function(round,
 
   results <- ess_variable_codes_raw(vars, cache = cache, quiet = quiet)
 
-  rows <- list()
-  for (i in seq_along(results)) {
-    v <- results[[i]]
-    if (is.null(v)) {
-      next
-    }
-    name <- ess_en(v$name)
-    edges <- v$codeList$edges
-    if (length(edges) == 0L) {
-      next
-    }
-    for (e in edges) {
-      is_missing <- isTRUE(ess_lgl(e$node$isMissing))
-      if (missing_only && !is_missing) {
-        next
+  # One table per variable, built across its whole code list at once. A round's
+  # 700 variables carry some 8,600 codes between them, so a single-row
+  # data.table per code dominated everything else this function does.
+  ess_rows_to_dt(
+    results,
+    function(v) {
+      if (is.null(v)) {
+        return(NULL)
       }
-      rows[[length(rows) + 1L]] <- data.table::data.table(
-        variable_name = name,
-        value = ess_chr(e$node$value),
-        label = ess_en(e$node$label),
-        is_missing = is_missing
+      edges <- v$codeList$edges
+      if (length(edges) == 0L) {
+        return(NULL)
+      }
+
+      is_missing <- vapply(
+        edges, function(e) isTRUE(ess_lgl(e$node$isMissing)), logical(1)
       )
-    }
-  }
+      keep <- if (missing_only) which(is_missing) else seq_along(edges)
+      if (length(keep) == 0L) {
+        return(NULL)
+      }
+      edges <- edges[keep]
 
-  if (length(rows) == 0L) {
-    return(proto)
-  }
-
-  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+      data.table::data.table(
+        variable_name = ess_en(v$name),
+        value = vapply(edges, function(e) ess_chr(e$node$value), character(1)),
+        label = vapply(edges, function(e) ess_en(e$node$label), character(1)),
+        is_missing = is_missing[keep]
+      )
+    },
+    proto
+  )
 }
 
 #' Codes the ESS treats as missing
@@ -275,11 +277,18 @@ ess_recode_missings <- function(dt,
     return(invisible(dt))
   }
 
-  changed <- 0L
-  touched <- character()
+  # Split once into a per-variable lookup. Filtering the whole code table inside
+  # the loop rescanned it for every column, which is quadratic in a file's width.
+  by_var <- split(codes$value, codes$variable_name)
 
-  for (col in intersect(cols, unique(codes$variable_name))) {
-    vals <- codes$value[codes$variable_name == col]
+  cols <- intersect(cols, names(by_var))
+
+  changed <- 0L
+  touched <- character(length(cols))
+  n_touched <- 0L
+
+  for (col in cols) {
+    vals <- by_var[[col]]
     x <- dt[[col]]
 
     # The catalogue reports codes as strings; match them in the column's own
@@ -300,8 +309,11 @@ ess_recode_missings <- function(dt,
 
     data.table::set(dt, i = which(hits), j = col, value = NA)
     changed <- changed + n
-    touched <- c(touched, col)
+    n_touched <- n_touched + 1L
+    touched[[n_touched]] <- col
   }
+
+  touched <- touched[seq_len(n_touched)]
 
   if (!quiet) {
     if (changed == 0L) {
@@ -325,8 +337,12 @@ ess_recode_missings <- function(dt,
 #' and identifiers such as `idno` are left alone. Codes flagged as missing
 #' become `NA` rather than a factor level, unless `keep_missing = TRUE`.
 #'
+#' Columns that are already factors are left alone too, and reported. A factor
+#' holds labels rather than codes, so there is nothing left to look up.
+#'
 #' Like [ess_recode_missings()], this modifies `dt` **by reference**. Pass
-#' `data.table::copy(dt)` if you want to keep the codes.
+#' `data.table::copy(dt)` if you want to keep the codes. Because of that, the
+#' call is idempotent: running it twice converts each column once.
 #'
 #' @inheritParams ess_recode_missings
 #' @param keep_missing If `TRUE`, missing codes become factor levels — "Refusal"
@@ -390,11 +406,36 @@ ess_as_factor <- function(dt,
     return(invisible(dt))
   }
 
-  converted <- character()
-  skipped <- character()
+  # Split once into per-variable row indices, rather than rescanning the whole
+  # label table for every column of the data.
+  by_var <- split(seq_len(nrow(labs)), labs$variable_name)
 
-  for (col in intersect(cols, unique(labs$variable_name))) {
-    this <- labs[labs$variable_name == col]
+  cols <- intersect(cols, names(by_var))
+
+  # Preallocated and trimmed at the end: growing these with c() reallocates on
+  # every column, and a full round is 700 of them.
+  converted <- character(length(cols))
+  skipped <- character(length(cols))
+  already <- character(length(cols))
+  n_converted <- 0L
+  n_skipped <- 0L
+  n_already <- 0L
+
+  for (col in cols) {
+    x <- dt[[col]]
+
+    # A factor already holds labels, not codes, so re-levelling it against the
+    # codes would match nothing and blank the column. This matters because the
+    # conversion is by reference: without the guard, calling this twice on the
+    # same table -- or once for all columns and again for one -- silently
+    # replaced the data with NA.
+    if (is.factor(x)) {
+      n_already <- n_already + 1L
+      already[[n_already]] <- col
+      next
+    }
+
+    this <- labs[by_var[[col]]]
     if (!keep_missing) {
       this <- this[!this$is_missing]
     }
@@ -402,14 +443,18 @@ ess_as_factor <- function(dt,
       next
     }
     if (nrow(this) > max_levels) {
-      skipped <- c(skipped, col)
+      n_skipped <- n_skipped + 1L
+      skipped[[n_skipped]] <- col
       next
     }
 
-    x <- dt[[col]]
     key <- if (is.character(x)) this$value else suppressWarnings(as.numeric(this$value))
-    if (!is.character(x) && anyNA(key)) {
-      skipped <- c(skipped, col)
+
+    # Duplicated levels would make factor() drop every value mapped to the
+    # second one, so treat them the same as an uninterpretable code.
+    if ((!is.character(x) && anyNA(key)) || anyDuplicated(key) > 0L) {
+      n_skipped <- n_skipped + 1L
+      skipped[[n_skipped]] <- col
       next
     }
 
@@ -417,8 +462,13 @@ ess_as_factor <- function(dt,
       dt, j = col,
       value = factor(x, levels = key, labels = this$label)
     )
-    converted <- c(converted, col)
+    n_converted <- n_converted + 1L
+    converted[[n_converted]] <- col
   }
+
+  converted <- converted[seq_len(n_converted)]
+  skipped <- skipped[seq_len(n_skipped)]
+  already <- already[seq_len(n_already)]
 
   if (!quiet) {
     if (length(converted) > 0L) {
@@ -426,7 +476,12 @@ ess_as_factor <- function(dt,
     }
     if (length(skipped) > 0L) {
       cli::cli_alert_info(
-        "Left {length(skipped)} column{?s} unchanged (over {max_levels} levels, or non-numeric codes): {.val {skipped}}."
+        "Left {length(skipped)} column{?s} unchanged (over {max_levels} levels, or ambiguous codes): {.val {skipped}}."
+      )
+    }
+    if (length(already) > 0L) {
+      cli::cli_alert_info(
+        "Left {length(already)} column{?s} unchanged, already {.cls factor}: {.val {already}}."
       )
     }
   }

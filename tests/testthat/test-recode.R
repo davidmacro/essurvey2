@@ -156,6 +156,50 @@ test_that("ess_as_factor(keep_missing = TRUE) keeps them as levels", {
   expect_equal(as.character(dt$gndr), c("Male", "Female", "No answer"))
 })
 
+test_that("ess_as_factor() is idempotent: a second call does not blank the column", {
+  # The conversion is by reference, so a re-run of the same script hits an
+  # already-converted column. Re-levelling labels against codes would match
+  # nothing and silently replace every value with NA.
+  local_mocked_bindings(
+    ess_value_labels = function(...) {
+      data.table::data.table(
+        variable_name = c("gndr", "gndr"),
+        value = c("1", "2"),
+        label = c("Male", "Female"),
+        is_missing = c(FALSE, FALSE)
+      )
+    }
+  )
+
+  dt <- data.table::data.table(essround = rep(11L, 2L), gndr = c(1L, 2L))
+  ess_as_factor(dt, quiet = TRUE)
+  expect_equal(as.character(dt$gndr), c("Male", "Female"))
+
+  expect_message(ess_as_factor(dt), "already")
+  expect_equal(as.character(dt$gndr), c("Male", "Female"))
+  expect_equal(levels(dt$gndr), c("Male", "Female"))
+})
+
+test_that("ess_as_factor() leaves a column whose codes collide numerically alone", {
+  # Two codes that parse to the same number would make factor() drop every value
+  # matching the second one.
+  local_mocked_bindings(
+    ess_value_labels = function(...) {
+      data.table::data.table(
+        variable_name = c("odd", "odd"),
+        value = c("1", "1.0"),
+        label = c("One", "Also one"),
+        is_missing = c(FALSE, FALSE)
+      )
+    }
+  )
+
+  dt <- data.table::data.table(essround = rep(11L, 2L), odd = c(1L, 2L))
+  expect_message(ess_as_factor(dt), "unchanged")
+  expect_false(is.factor(dt$odd))
+  expect_equal(dt$odd, c(1L, 2L))
+})
+
 test_that("ess_as_factor() leaves columns with too many codes alone", {
   local_mocked_bindings(
     ess_value_labels = function(...) {

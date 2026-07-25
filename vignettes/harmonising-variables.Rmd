@@ -149,7 +149,8 @@ dt[, .N, by = eisced]
 `ess_as_factor()` modifies `dt` in place, `data.table` fashion. It also drops
 missing-flagged codes rather than making them levels, and leaves alone any column
 with more than `max_levels` codes — so a near-continuous variable does not become
-a factor with hundreds of levels.
+a factor with hundreds of levels. Columns that are already factors are left alone
+too, so re-running this chunk converts each column once rather than blanking it.
 
 Keep a numeric copy if you want both a gradient and a labelled table:
 

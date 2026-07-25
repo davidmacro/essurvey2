@@ -168,6 +168,79 @@ test_that("localised text nodes are reduced to their English string", {
   expect_true(is.na(en(list(no = "Austria"))))
 })
 
+test_that("IDs are escaped before they reach a GraphQL string literal", {
+  esc <- function(x) essurvey2:::ess_gql_string(x)
+
+  expect_equal(esc("abc"), '"abc"')
+  expect_equal(esc('a"b'), '"a\\"b"')
+  expect_equal(esc("a\\b"), '"a\\\\b"')
+  expect_equal(esc("a\nb"), '"a\\nb"')
+})
+
+test_that("a quote in a data file ID cannot inject fields into the query", {
+  # ess_data_file_info() takes IDs from the caller, and the aliased batch query
+  # is built with sprintf(), so the interpolation has to be escaped.
+  query <- essurvey2:::ess_alias_query(
+    "dataFileMetadata",
+    list(list(id = 'x" ) { id } evil: junk(id: "y', version = 1L)),
+    "id"
+  )
+
+  # The injected text survives, but inertly: its quote is escaped, so the ID
+  # remains a single string literal delimited by exactly two unescaped quotes.
+  expect_match(query, 'x\\\\" \\) \\{ id \\} evil: junk\\(id: \\\\"y')
+
+  bare <- gsub('\\"', "", query, fixed = TRUE)
+  expect_equal(lengths(regmatches(bare, gregexpr('"', bare, fixed = TRUE))), 2L)
+
+  # One aliased field, not two.
+  expect_equal(lengths(regmatches(query, gregexpr("dataFileMetadata", query))), 1L)
+})
+
+test_that("the alias query keeps the requested order and arguments", {
+  query <- essurvey2:::ess_alias_query(
+    "studyMetadata",
+    list(list(id = "one", version = 3L), list(id = "two", version = 4L)),
+    "id"
+  )
+
+  expect_match(query, 'a1: studyMetadata\\(id: "one", version: 3')
+  expect_match(query, 'a2: studyMetadata\\(id: "two", version: 4')
+  expect_match(query, "instance: PUBLISHED")
+  expect_match(query, "agencyId: INT_ESSERIC")
+})
+
+test_that("ess_rows_to_dt() maps builders that yield no rows, one row, or many", {
+  proto <- data.table::data.table(a = character(), b = integer())
+  build <- function(x) {
+    if (x == 0L) NULL else data.table::data.table(a = letters[seq_len(x)], b = x)
+  }
+
+  # Empty input, and input where every element yields nothing, both give the
+  # prototype rather than a shapeless zero-column table.
+  expect_identical(essurvey2:::ess_rows_to_dt(list(), build, proto), proto)
+  expect_identical(essurvey2:::ess_rows_to_dt(NULL, build, proto), proto)
+  expect_named(essurvey2:::ess_rows_to_dt(list(0L, 0L), build, proto), c("a", "b"))
+  expect_equal(nrow(essurvey2:::ess_rows_to_dt(list(0L, 0L), build, proto)), 0L)
+
+  out <- essurvey2:::ess_rows_to_dt(list(1L, 0L, 3L), build, proto)
+  expect_equal(out$a, c("a", "a", "b", "c"))
+  expect_equal(out$b, c(1L, 3L, 3L, 3L))
+})
+
+test_that("byte counts do not pick up padding when formatted as a batch", {
+  # format() pads a vector to a common width; each entry must stand alone.
+  expect_equal(
+    essurvey2:::ess_format_bytes(c(2048, 512.5 * 1024)),
+    c("2.0 KB", "512.5 KB")
+  )
+  expect_equal(
+    essurvey2:::ess_format_bytes(c(512, NA, 2 * 1024^3)),
+    c("512 B", NA, "2.00 GB")
+  )
+  expect_equal(essurvey2:::ess_format_bytes(numeric()), character())
+})
+
 test_that("scalar coercion helpers turn absent values into typed NA", {
   expect_true(is.na(essurvey2:::ess_chr(NULL)))
   expect_true(is.na(essurvey2:::ess_int(list())))

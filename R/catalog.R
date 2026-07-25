@@ -9,9 +9,9 @@ ess_alias_query <- function(field, items, selection) {
     function(i) {
       it <- items[[i]]
       sprintf(
-        'a%d: %s(id: "%s", version: %d, instance: %s, agencyId: %s) { %s }',
-        i, field, it$id, as.integer(it$version), ess_gql_instance, ess_gql_agency,
-        selection
+        "a%d: %s(id: %s, version: %d, instance: %s, agencyId: %s) { %s }",
+        i, field, ess_gql_string(it$id), as.integer(it$version),
+        ess_gql_instance, ess_gql_agency, selection
       )
     },
     character(1)
@@ -166,35 +166,44 @@ ess_series_studies <- function(cache = TRUE) {
     cache = cache
   )
 
-  studies <- data$search$seriesMetadata$studies
-
-  rows <- list()
-  for (st in studies) {
-    study_title <- ess_en(st$title)
-    round <- suppressWarnings(as.integer(sub("^ESS0*([0-9]+)$", "\\1", study_title)))
-
-    for (df in st$mainDataFiles) {
-      rows[[length(rows) + 1L]] <- data.table::data.table(
-        round = round,
+  # One table per study, covering all of its main data files at once; the
+  # study-level columns recycle down its rows.
+  out <- ess_rows_to_dt(
+    data$search$seriesMetadata$studies,
+    function(st) {
+      files <- st$mainDataFiles
+      if (length(files) == 0L) {
+        return(NULL)
+      }
+      study_title <- ess_en(st$title)
+      data.table::data.table(
+        round = suppressWarnings(
+          as.integer(sub("^ESS0*([0-9]+)$", "\\1", study_title))
+        ),
         study_title = study_title,
         description = ess_en(st$alternateTitle),
         study_id = ess_chr(st$id),
         study_version = ess_int(st$version),
-        datafile_id = ess_chr(df$id),
-        datafile_version = ess_int(df$version),
-        file_label = ess_en(df$title)
+        datafile_id = vapply(files, function(df) ess_chr(df$id), character(1)),
+        datafile_version = vapply(files, function(df) ess_int(df$version), integer(1)),
+        file_label = vapply(files, function(df) ess_en(df$title), character(1))
       )
-    }
-  }
+    },
+    data.table::data.table(
+      round = integer(), study_title = character(), description = character(),
+      study_id = character(), study_version = integer(),
+      datafile_id = character(), datafile_version = integer(),
+      file_label = character()
+    )
+  )
 
-  if (length(rows) == 0L) {
+  if (nrow(out) == 0L) {
     cli::cli_abort(
       "The catalogue returned no ESS studies.",
       class = "essurvey2_error_catalogue"
     )
   }
 
-  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   parsed <- ess_parse_file_label(out$file_label)
 
   # Prefer the round parsed from the study title; fall back to the file label.
@@ -316,36 +325,50 @@ ess_data_files <- function(rounds = NULL, kind = NULL, doi = TRUE, cache = TRUE)
 
   results <- ess_alias_perform("studyMetadata", items, selection, cache = cache)
 
-  rows <- list()
-  for (i in seq_along(results)) {
-    st <- results[[i]]
-    if (is.null(st)) {
-      next
-    }
-    for (df in st$dataFiles) {
-      rows[[length(rows) + 1L]] <- data.table::data.table(
+  # Mapped over the request indices rather than over `results`, because each
+  # answer's round comes from the `wanted` row it was asked for.
+  out <- ess_rows_to_dt(
+    seq_along(results),
+    function(i) {
+      st <- results[[i]]
+      if (is.null(st) || length(st$dataFiles) == 0L) {
+        return(NULL)
+      }
+      files <- st$dataFiles
+      data.table::data.table(
         round = wanted$round[[i]],
-        file_label = ess_en(df$label),
-        description = ess_en(df$alternateTitle),
-        is_main = ess_lgl(df$isMainFile),
-        datafile_id = ess_chr(df$id),
-        datafile_version = ess_int(df$version)
+        file_label = vapply(files, function(df) ess_en(df$label), character(1)),
+        description = vapply(files, function(df) ess_en(df$alternateTitle), character(1)),
+        is_main = vapply(files, function(df) ess_lgl(df$isMainFile), logical(1)),
+        datafile_id = vapply(files, function(df) ess_chr(df$id), character(1)),
+        datafile_version = vapply(files, function(df) ess_int(df$version), integer(1))
       )
-    }
-  }
-
-  proto <- data.table::data.table(
-    round = integer(), file_kind = character(), file_label = character(),
-    file_country = character(), edition = character(), description = character(),
-    is_main = logical(), n_variables = integer(), datafile_id = character(),
-    datafile_version = integer()
+    },
+    data.table::data.table(
+      round = integer(), file_label = character(), description = character(),
+      is_main = logical(), datafile_id = character(), datafile_version = integer()
+    )
   )
 
-  if (length(rows) == 0L) {
-    return(proto)
+  if (nrow(out) == 0L) {
+    # Same columns a populated result has, so a caller can subset either.
+    proto <- data.table::data.table(
+      round = integer(), file_kind = character(), file_label = character(),
+      file_country = character(), edition = character(), description = character(),
+      is_main = logical(), n_variables = integer(), datafile_id = character(),
+      datafile_version = integer()
+    )
+    if (doi) {
+      proto[, doi := character()]
+      data.table::setcolorder(proto, c(
+        "round", "file_kind", "file_label", "file_country", "edition",
+        "description", "is_main", "doi", "n_variables", "datafile_id",
+        "datafile_version"
+      ))
+    }
+    return(proto[])
   }
 
-  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   parsed <- ess_parse_file_label(out$file_label)
   out[, file_kind := parsed$file_kind]
   out[, file_country := parsed$file_country]
@@ -488,32 +511,38 @@ ess_data_file_info <- function(datafile_id, datafile_version, cache = TRUE) {
 
   results <- ess_alias_perform("dataFileMetadata", items, selection, cache = cache)
 
-  rows <- lapply(results, function(df) {
-    if (is.null(df)) {
-      return(NULL)
-    }
-    countries <- df$coverage$spatialCoverage$countryCategoriesControlledVocabulary
-    codes <- vapply(countries, function(c) ess_chr(c$value), character(1))
-    doi <- ess_chr(df$citation$internationalIdentifier)
+  out <- ess_rows_to_dt(
+    results,
+    function(df) {
+      if (is.null(df)) {
+        return(NULL)
+      }
+      countries <- df$coverage$spatialCoverage$countryCategoriesControlledVocabulary
+      codes <- vapply(countries, function(c) ess_chr(c$value), character(1))
 
+      data.table::data.table(
+        file_label = ess_en(df$label),
+        description = ess_en(df$alternateTitle),
+        edition = ess_chr(df$curatedVersion),
+        doi = ess_chr(df$citation$internationalIdentifier),
+        doi_url = ess_chr(df$citation$internationalIdentifierUrl),
+        published = substr(ess_chr(df$citation$date), 1L, 10L),
+        n_variables = ess_int(df$variableCount),
+        n_countries = length(codes),
+        countries = list(codes),
+        datafile_id = ess_chr(df$id),
+        datafile_version = ess_int(df$version)
+      )
+    },
     data.table::data.table(
-      file_label = ess_en(df$label),
-      description = ess_en(df$alternateTitle),
-      edition = ess_chr(df$curatedVersion),
-      doi = doi,
-      doi_url = ess_chr(df$citation$internationalIdentifierUrl),
-      published = substr(ess_chr(df$citation$date), 1L, 10L),
-      n_variables = ess_int(df$variableCount),
-      n_countries = length(codes),
-      countries = list(codes),
-      datafile_id = ess_chr(df$id),
-      datafile_version = ess_int(df$version)
+      file_label = character(), description = character(), edition = character(),
+      doi = character(), doi_url = character(), published = character(),
+      n_variables = integer(), n_countries = integer(), countries = list(),
+      datafile_id = character(), datafile_version = integer()
     )
-  })
+  )
 
-  rows <- rows[!vapply(rows, is.null, logical(1))]
-
-  if (length(rows) == 0L) {
+  if (nrow(out) == 0L) {
     cli::cli_abort(
       c(
         "The catalogue returned nothing for {cli::qty(length(items))}{?this/these} data file{?s}.",
@@ -522,8 +551,6 @@ ess_data_file_info <- function(datafile_id, datafile_version, cache = TRUE) {
       class = "essurvey2_error_catalogue"
     )
   }
-
-  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
 
   # Return in the order asked for, including any repeats.
   idx <- match(keys, paste0(out$datafile_id, "@", out$datafile_version))
@@ -559,28 +586,27 @@ ess_countries <- function(rounds = NULL, cache = TRUE) {
 
   info <- ess_data_file_info(files$datafile_id, files$datafile_version, cache = cache)
 
-  rows <- list()
-  for (i in seq_len(nrow(info))) {
-    codes <- info$countries[[i]]
-    if (length(codes) == 0L) {
-      next
-    }
-    rows[[length(rows) + 1L]] <- data.table::data.table(
-      country_code = codes,
-      round = files$round[[i]]
-    )
-  }
-
-  proto <- data.table::data.table(
-    country_code = character(), country_name = character(),
-    n_rounds = integer(), rounds = list()
+  # One (country, round) table per data file; ess_data_file_info() answers row
+  # for row, so row i of `info` is the file named by row i of `files`.
+  long <- ess_rows_to_dt(
+    seq_len(nrow(info)),
+    function(i) {
+      codes <- info$countries[[i]]
+      if (length(codes) == 0L) {
+        return(NULL)
+      }
+      data.table::data.table(country_code = codes, round = files$round[[i]])
+    },
+    data.table::data.table(country_code = character(), round = integer())
   )
 
-  if (length(rows) == 0L) {
-    return(proto)
+  if (nrow(long) == 0L) {
+    return(data.table::data.table(
+      country_code = character(), country_name = character(),
+      n_rounds = integer(), rounds = list()
+    ))
   }
 
-  long <- data.table::rbindlist(rows, use.names = TRUE)
   lookup <- ess_country_names(rounds = rounds, cache = cache)
 
   out <- long[, list(
@@ -613,20 +639,26 @@ ess_country_names <- function(rounds = NULL, cache = TRUE) {
 
   results <- ess_alias_perform("dataFileMetadata", items, selection, cache = cache)
 
-  out <- character()
-  for (df in results) {
-    if (is.null(df)) {
-      next
-    }
-    for (c in df$coverage$spatialCoverage$countryCategoriesControlledVocabulary) {
-      code <- ess_chr(c$value)
-      if (!is.na(code) && !code %in% names(out)) {
-        out[[code]] <- ess_en(c$label)
+  # Collect every (code, name) pair, then keep the first name per code. Building
+  # the named vector one element at a time rescanned its own names on each code.
+  pairs <- ess_rows_to_dt(
+    results,
+    function(df) {
+      vocab <- df$coverage$spatialCoverage$countryCategoriesControlledVocabulary
+      if (is.null(df) || length(vocab) == 0L) {
+        return(NULL)
       }
-    }
-  }
+      data.table::data.table(
+        country_code = vapply(vocab, function(c) ess_chr(c$value), character(1)),
+        country_name = vapply(vocab, function(c) ess_en(c$label), character(1))
+      )
+    },
+    data.table::data.table(country_code = character(), country_name = character())
+  )
 
-  out
+  pairs <- unique(pairs[!is.na(pairs$country_code)], by = "country_code")
+
+  stats::setNames(pairs$country_name, pairs$country_code)
 }
 
 #' Rounds a country took part in
@@ -704,33 +736,37 @@ ess_country_rounds <- function(country, cache = TRUE) {
 
   rounds <- ess_rounds(cache = cache)
 
-  rows <- list()
-  for (st in meta$studies) {
-    title <- ess_en(st$studyCitation$title)
-    round <- suppressWarnings(as.integer(sub("^ESS0*([0-9]+)$", "\\1", title)))
-    for (df in st$dataFiles) {
-      rows[[length(rows) + 1L]] <- data.table::data.table(
+  out <- ess_rows_to_dt(
+    meta$studies,
+    function(st) {
+      files <- st$dataFiles
+      if (length(files) == 0L) {
+        return(NULL)
+      }
+      title <- ess_en(st$studyCitation$title)
+      data.table::data.table(
         country_code = country,
         country_name = country_name,
-        round = round,
-        datafile_id = ess_chr(df$id),
-        datafile_version = ess_int(df$version),
-        description = ess_en(df$alternateTitle)
+        round = suppressWarnings(as.integer(sub("^ESS0*([0-9]+)$", "\\1", title))),
+        datafile_id = vapply(files, function(df) ess_chr(df$id), character(1)),
+        datafile_version = vapply(files, function(df) ess_int(df$version), integer(1)),
+        description = vapply(files, function(df) ess_en(df$alternateTitle), character(1))
       )
-    }
-  }
-
-  proto <- data.table::data.table(
-    country_code = character(), country_name = character(), round = integer(),
-    file_label = character(), edition = character(), doi = character(),
-    datafile_id = character(), datafile_version = integer()
+    },
+    data.table::data.table(
+      country_code = character(), country_name = character(), round = integer(),
+      datafile_id = character(), datafile_version = integer(),
+      description = character()
+    )
   )
 
-  if (length(rows) == 0L) {
-    return(proto)
+  if (nrow(out) == 0L) {
+    return(data.table::data.table(
+      country_code = character(), country_name = character(), round = integer(),
+      file_label = character(), edition = character(), doi = character(),
+      datafile_id = character(), datafile_version = integer()
+    ))
   }
-
-  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
 
   info <- ess_data_file_info(out$datafile_id, out$datafile_version, cache = cache)
   out[, file_label := info$file_label]

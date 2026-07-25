@@ -40,7 +40,8 @@ happens in round 8.
 * `ess_recode_missings()` does the same locally, using each variable's own
   missing codes rather than assuming a single convention.
 * `ess_value_labels()` and `ess_as_factor()` apply the value labels, which
-  parquet files do not carry.
+  parquet files do not carry. Both modify by reference; `ess_as_factor()` skips
+  columns that are already factors, so it is safe to re-run.
 * `ess_missing_codes()` reports which codes count as missing.
 
 ## Configuration and caching
