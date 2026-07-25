@@ -2,6 +2,7 @@
 
 <!-- badges: start -->
 [![CRAN status](https://www.r-pkg.org/badges/version/essurvey2)](https://CRAN.R-project.org/package=essurvey2)
+[![R-CMD-check](https://github.com/davidmacro/essurvey2/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/davidmacro/essurvey2/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
 Download data from the [European Social Survey](https://www.europeansocialsurvey.org/)

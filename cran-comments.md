@@ -1,8 +1,13 @@
 ## Test environments
 
 * local: Windows 11 x64 (build 26200), R 4.5.2 (2025-10-31 ucrt), x86_64-w64-mingw32
+* GitHub Actions (`r-lib/actions`, `--as-cran`):
+  * ubuntu-latest, R-devel
+  * ubuntu-latest, R release
+  * ubuntu-latest, R oldrel-1
+  * macos-latest, R release
+  * windows-latest, R release
 * win-builder: R-devel  <!-- TODO: fill in once run -->
-* R-hub: Linux and macOS  <!-- TODO: fill in once run -->
 
 ## R CMD check results
 
