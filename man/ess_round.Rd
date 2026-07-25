@@ -35,7 +35,8 @@ arrive as \code{NA}. Set to \code{FALSE} to keep the original codes.}
 
 \item{user_id}{Your ESS API user ID. Defaults to \code{\link[=ess_user_id]{ess_user_id()}}.}
 
-\item{use_cache}{If \code{TRUE} (the default), reuse downloads already on disk.}
+\item{use_cache}{If \code{TRUE} (the default), reuse downloads already on disk and
+keep this one, where the cache is available. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}.}
 
 \item{quiet}{If \code{TRUE}, suppress progress and status messages.}
 }
@@ -52,8 +53,10 @@ the live metadata catalogue, so a newly published round or a new file edition
 is picked up without updating this package.
 }
 \details{
-Downloads are cached on disk, so calling this again — now or in a later
-session — costs nothing. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}.
+Downloads can be cached on disk, so calling this again — now or in a later
+session — costs nothing. The package asks before first writing to the default
+cache location, and falls back to the session's temporary directory when it
+may not. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}.
 }
 \examples{
 \dontrun{

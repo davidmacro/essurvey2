@@ -35,7 +35,8 @@ arrive as \code{NA}. Set to \code{FALSE} to keep the original codes.}
 
 \item{user_id}{Your ESS API user ID. Defaults to \code{\link[=ess_user_id]{ess_user_id()}}.}
 
-\item{use_cache}{If \code{TRUE} (the default), reuse downloads already on disk.}
+\item{use_cache}{If \code{TRUE} (the default), reuse downloads already on disk and
+keep this one, where the cache is available. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}.}
 
 \item{quiet}{If \code{TRUE}, suppress progress and status messages.}
 }

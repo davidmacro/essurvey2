@@ -19,8 +19,7 @@ no longer works.
 ## Installation
 
 ```r
-# install.packages("remotes")
-remotes::install_local("path/to/essurvey2")
+install.packages("essurvey2")
 ```
 
 ## Configuration
@@ -169,16 +168,35 @@ is not in the round 5 integrated file at all.
 
 ## Caching
 
-Downloads are cached on disk, so repeating a call — now or in a later session —
-costs nothing.
+Downloads can be kept on disk, so repeating a call — now or in a later session
+— costs nothing.
+
+The default location is `tools::R_user_dir("essurvey2", "cache")`, which is in
+your own filespace, so the package asks before it writes there. It asks once,
+the first time a download would be cached in an interactive session, and
+remembers the answer. Declining is not fatal: downloads then go to the session's
+temporary directory instead.
+
+Outside an interactive session — `Rscript`, a knitted document, a CI job —
+there is nobody to ask, so nothing is written to your filespace and downloads go
+to the temporary directory. Turn persistent caching on explicitly there:
+
+```r
+options(essurvey2.cache_consent = TRUE)        # or ESSURVEY2_CACHE_CONSENT=true
+options(essurvey2.cache_dir = "D:/data/ess-cache")  # naming a place implies consent
+```
+
+The cache is capped at 1 GB and trimmed on every write, oldest first, so it
+cannot grow without bound.
 
 ```r
 ess_cache_list()      # what is cached, and how big
-ess_cache_dir()       # where it lives
+ess_cache_dir()       # where it lives (never creates or prompts)
 ess_cache_clear()     # start again
 
-options(essurvey2.cache_dir = "D:/data/ess-cache")  # somewhere else
-options(essurvey2.cache_dir = FALSE)                # switch caching off
+options(essurvey2.cache_max_size = 250 * 1024^2)  # a smaller cap
+options(essurvey2.cache_max_size = FALSE)         # no cap
+options(essurvey2.cache_dir = FALSE)              # switch caching off entirely
 ```
 
 ## Worked analyses

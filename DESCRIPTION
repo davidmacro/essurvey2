@@ -2,7 +2,7 @@ Package: essurvey2
 Title: Download Data from the European Social Survey API
 Version: 0.1.0
 Authors@R:
-    person("David", "Macro", , "david@dataim.nl", role = c("aut", "cre"))
+    person("David", "Macro", , "david@dataim.nl", role = c("aut", "cre", "cph"))
 Description: A client for the European Social Survey (ESS) data API at
     <https://api.ess.sikt.no>. Data files are discovered through the ESS
     metadata catalogue and downloaded as Apache Parquet, then returned as

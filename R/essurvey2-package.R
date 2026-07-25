@@ -30,8 +30,11 @@
 #' * [ess_download_file()] — a data file to disk, unparsed
 #'
 #' @section Cache:
-#' Downloads are cached on disk between sessions. See [ess_cache_dir()],
-#' [ess_cache_list()] and [ess_cache_clear()].
+#' Downloads can be cached on disk between sessions. The default location is in
+#' your own filespace, so the package asks before writing there and falls back to
+#' the session's temporary directory when it may not. The cache is capped and
+#' trimmed oldest-first. See [ess_cache_dir()], [ess_cache_list()] and
+#' [ess_cache_clear()].
 #'
 #' @section Differences from the essurvey package:
 #' The earlier `essurvey` package scraped the ESS website and parsed SPSS or

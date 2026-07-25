@@ -33,7 +33,10 @@ error.}
 \item{user_id}{Your ESS API user ID. Defaults to \code{\link[=ess_user_id]{ess_user_id()}}.}
 
 \item{use_cache}{If \code{TRUE} (the default) reuse a previously downloaded copy,
-and keep the download for next time. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}.}
+and keep the download for next time. Whether it can actually be kept
+depends on the cache being available: see \code{\link[=ess_cache_dir]{ess_cache_dir()}}, which asks
+before first writing to the default location and falls back to a temporary
+file if it may not.}
 
 \item{quiet}{If \code{TRUE}, suppress progress and status messages.}
 }

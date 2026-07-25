@@ -78,6 +78,24 @@ test_that("a bad user ID is caught before the network is touched", {
   )
 })
 
+test_that("an unreachable data API is reported as an offline error, not a curl one", {
+  local_clean_config()
+
+  # .invalid never resolves (RFC 2606), so this fails at DNS without leaving the
+  # machine. httr2 does not retry connection failures, so it fails at once.
+  withr::local_options(list(essurvey2.api_url = "https://essurvey2.invalid"))
+
+  expect_error(
+    ess_download_file(
+      "10.21338/ess6e02_6",
+      user_id = fake_user_id,
+      use_cache = FALSE,
+      quiet = TRUE
+    ),
+    class = "essurvey2_error_offline"
+  )
+})
+
 test_that("recode_missings must be a single TRUE or FALSE", {
   expect_error(
     ess_data_file_url("10.21338/ess6e02_7", user_id = fake_user_id, recode_missings = NA),

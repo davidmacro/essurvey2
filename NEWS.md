@@ -48,8 +48,17 @@ happens in round 8.
 
 * `ess_set_user_id()`, `ess_user_id()`, `ess_config()`. A startup message
   explains how to set `ESS_USER_ID` when it is unset, and stays quiet once it is.
-* Downloads are cached between sessions: `ess_cache_dir()`, `ess_cache_list()`,
-  `ess_cache_clear()`, and `use_cache` on the download functions.
+* Downloads can be cached between sessions: `ess_cache_dir()`,
+  `ess_cache_list()`, `ess_cache_clear()`, and `use_cache` on the download
+  functions. The default location is `tools::R_user_dir("essurvey2", "cache")`,
+  which is the user's own filespace, so the package asks before writing there —
+  once, in an interactive session, remembering the answer. Non-interactive
+  sessions write nothing there and fall back to the session's temporary
+  directory; `options(essurvey2.cache_consent = TRUE)` or
+  `ESSURVEY2_CACHE_CONSENT` opts in without a prompt, and naming a directory
+  with `options(essurvey2.cache_dir)` counts as consent. The cache is capped
+  (`options(essurvey2.cache_max_size)`, 1 GB by default) and trimmed oldest-first
+  on every write.
 * Catalogue answers are memoised per session; `ess_catalogue_refresh()` forgets
   them.
 
@@ -78,3 +87,5 @@ that task has to get right rather than around the package's functions:
 API failures are raised as classed conditions — `essurvey2_error_user_id`,
 `essurvey2_error_doi`, `essurvey2_error_server`, `essurvey2_error_catalogue`,
 `essurvey2_error_offline` — and carry the API's request ID for support enquiries.
+An unreachable host is reported as `essurvey2_error_offline`, naming the endpoint,
+for downloads as well as for catalogue lookups.

@@ -17,7 +17,10 @@
 #'   [ess_data_file_url()] for why this cannot be switched off with a value.
 #' @param user_id Your ESS API user ID. Defaults to [ess_user_id()].
 #' @param use_cache If `TRUE` (the default) reuse a previously downloaded copy,
-#'   and keep the download for next time. See [ess_cache_dir()].
+#'   and keep the download for next time. Whether it can actually be kept
+#'   depends on the cache being available: see [ess_cache_dir()], which asks
+#'   before first writing to the default location and falls back to a temporary
+#'   file if it may not.
 #' @param overwrite If `TRUE`, download again even if the file is already
 #'   cached at `path`.
 #' @param quiet If `TRUE`, suppress progress and status messages.
@@ -55,6 +58,10 @@ ess_download_file <- function(doi,
 
   cached <- isTRUE(use_cache)
 
+  # Whether the file will land in the managed cache, as opposed to a temporary
+  # file or a path the caller named. Only that case gets pruned afterwards.
+  in_cache <- FALSE
+
   if (is.null(path)) {
     path <- if (cached) {
       ess_cache_path(doi, format, recode_missings, create = TRUE)
@@ -67,6 +74,8 @@ ess_download_file <- function(doi,
         pattern = "essurvey2-",
         fileext = paste0(".", ess_format_ext[[format]])
       )
+    } else {
+      in_cache <- TRUE
     }
   } else {
     ess_check_string(path, "path")
@@ -104,7 +113,22 @@ ess_download_file <- function(doi,
   tmp <- paste0(path, ".part")
   on.exit(unlink(tmp), add = TRUE)
 
-  resp <- httr2::req_perform(req, path = tmp)
+  # A refused connection or a DNS failure never reaches ess_api_abort(), which
+  # needs a response to read. Name the endpoint instead of letting curl's own
+  # wording surface, matching how ess_gql() reports the same condition.
+  resp <- tryCatch(
+    httr2::req_perform(req, path = tmp),
+    httr2_failure = function(cnd) {
+      cli::cli_abort(
+        c(
+          "Could not reach the ESS data API.",
+          "x" = conditionMessage(cnd),
+          "i" = "{.url {ess_api_url()}}"
+        ),
+        class = "essurvey2_error_offline"
+      )
+    }
+  )
 
   if (httr2::resp_status(resp) >= 400L) {
     ess_api_abort(resp, doi = doi, path = tmp)
@@ -130,6 +154,13 @@ ess_download_file <- function(doi,
 
   if (!quiet) {
     cli::cli_alert_success("Downloaded {ess_format_bytes(size)} to {.path {path}}.")
+  }
+
+  # Keep the cache within its cap now that something has been added to it. A
+  # temporary file or a path the caller named is theirs, not the cache's, so
+  # neither triggers a trim.
+  if (in_cache) {
+    ess_cache_prune(dirname(path), quiet = quiet)
   }
 
   invisible(path)

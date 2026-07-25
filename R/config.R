@@ -211,12 +211,15 @@ ess_check_user_id <- function(user_id, arg = "user_id", call = rlang::caller_env
 ess_config <- function() {
   id <- ess_user_id(error = FALSE)
 
+  dir <- ess_cache_dir(create = FALSE)
+
   cfg <- list(
     api_url = ess_api_url(),
     gql_url = ess_gql_url(),
     user_id = id,
     user_id_source = ess_user_id_source(),
-    cache_dir = ess_cache_dir(create = FALSE)
+    cache_dir = dir,
+    cache_writable = !is.null(dir) && ess_cache_writable(dir)
   )
 
   cli::cli_h3("essurvey2 configuration")
@@ -228,7 +231,13 @@ ess_config <- function() {
     } else {
       paste0("{.val ", ess_mask_id(id), "} (from ", cfg$user_id_source, ")")
     },
-    "cache" = "{.path {cfg$cache_dir}}"
+    "cache" = if (is.null(dir)) {
+      "{.strong off}"
+    } else if (cfg$cache_writable) {
+      "{.path {dir}}"
+    } else {
+      paste0("{.path ", dir, "} ({.strong not yet agreed to} - see {.help essurvey2::ess_cache_dir})")
+    }
   ))
 
   invisible(cfg)

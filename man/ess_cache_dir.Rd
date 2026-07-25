@@ -7,20 +7,37 @@
 ess_cache_dir(create = FALSE)
 }
 \arguments{
-\item{create}{If \code{TRUE}, create the directory when it does not exist.}
+\item{create}{If \code{TRUE}, create the directory when it does not exist, asking
+for consent first if the default location has not been agreed to yet.}
 }
 \value{
 The cache directory as a length-one character vector, or \code{NULL} when
-caching is disabled.
+caching is disabled or consent for the default location is absent.
 }
 \description{
 Data files are cached on disk so that repeating a call — in the same session
 or a later one — does not re-download several megabytes. The default location
 is \code{tools::R_user_dir("essurvey2", "cache")}.
 }
-\details{
-Override it with an option, for instance to put the cache on a larger disk
-or to share it between projects:
+\section{Asking first}{
+
+That default lives in your home filespace, so essurvey2 does not write there
+until you say it may. The first time a download would be cached in an
+interactive session, the package names the directory and asks. Answer once
+and the answer is remembered, by a marker file inside the cache directory
+itself.
+
+Outside an interactive session — \code{Rscript}, a knitted document, a CI job —
+there is nobody to ask, so nothing is written to the home filespace and
+downloads go to the session's temporary directory instead. Two ways to turn
+persistent caching on without a prompt:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{options(essurvey2.cache_consent = TRUE)   # or the ESSURVEY2_CACHE_CONSENT
+Sys.setenv(ESSURVEY2_CACHE_CONSENT = "true")   # environment variable
+}\if{html}{\out{</div>}}
+
+Naming a directory yourself counts as consent in its own right, and is the
+clearest option in a pipeline:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{options(essurvey2.cache_dir = "D:/data/ess-cache")
 }\if{html}{\out{</div>}}
@@ -28,7 +45,22 @@ or to share it between projects:
 Set \code{options(essurvey2.cache_dir = FALSE)} to disable caching everywhere,
 which is equivalent to passing \code{use_cache = FALSE} to every call.
 }
+
+\section{Keeping it bounded}{
+
+The cache is capped, and trimmed on every write: once it would exceed the
+cap, the least recently modified files are deleted until it fits. The
+default cap is 1 GB. Change it, in bytes, with
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{options(essurvey2.cache_max_size = 250 * 1024^2)   # 250 MB
+options(essurvey2.cache_max_size = FALSE)          # no cap
+}\if{html}{\out{</div>}}
+
+\code{\link[=ess_cache_list]{ess_cache_list()}} shows what is held and \code{\link[=ess_cache_clear]{ess_cache_clear()}} empties it.
+}
+
 \examples{
+# Where downloads would be cached. Never prompts and never creates anything.
 ess_cache_dir()
 
 }

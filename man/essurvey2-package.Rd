@@ -46,8 +46,11 @@ Nothing in this group downloads survey data, so these are cheap to call.
 
 \section{Cache}{
 
-Downloads are cached on disk between sessions. See \code{\link[=ess_cache_dir]{ess_cache_dir()}},
-\code{\link[=ess_cache_list]{ess_cache_list()}} and \code{\link[=ess_cache_clear]{ess_cache_clear()}}.
+Downloads can be cached on disk between sessions. The default location is in
+your own filespace, so the package asks before writing there and falls back to
+the session's temporary directory when it may not. The cache is capped and
+trimmed oldest-first. See \code{\link[=ess_cache_dir]{ess_cache_dir()}}, \code{\link[=ess_cache_list]{ess_cache_list()}} and
+\code{\link[=ess_cache_clear]{ess_cache_clear()}}.
 }
 
 \section{Differences from the essurvey package}{
@@ -66,7 +69,7 @@ the metadata catalogue (\code{\link[=ess_variables]{ess_variables()}}), not in t
 }
 
 \author{
-\strong{Maintainer}: David Macro \email{david@dataim.nl}
+\strong{Maintainer}: David Macro \email{david@dataim.nl} [copyright holder]
 
 }
 \keyword{internal}

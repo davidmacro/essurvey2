@@ -7,8 +7,10 @@
 #' the live metadata catalogue, so a newly published round or a new file edition
 #' is picked up without updating this package.
 #'
-#' Downloads are cached on disk, so calling this again — now or in a later
-#' session — costs nothing. See [ess_cache_dir()].
+#' Downloads can be cached on disk, so calling this again — now or in a later
+#' session — costs nothing. The package asks before first writing to the default
+#' cache location, and falls back to the session's temporary directory when it
+#' may not. See [ess_cache_dir()].
 #'
 #' @param rounds One or more round numbers. [ess_rounds()] lists what is
 #'   published.
@@ -23,7 +25,8 @@
 #' @param format The transfer format, `"parquet"` by default. See
 #'   [ess_data()] for the alternatives.
 #' @param user_id Your ESS API user ID. Defaults to [ess_user_id()].
-#' @param use_cache If `TRUE` (the default), reuse downloads already on disk.
+#' @param use_cache If `TRUE` (the default), reuse downloads already on disk and
+#'   keep this one, where the cache is available. See [ess_cache_dir()].
 #' @param quiet If `TRUE`, suppress progress and status messages.
 #'
 #' @return A [data.table::data.table]. When several rounds are requested they
