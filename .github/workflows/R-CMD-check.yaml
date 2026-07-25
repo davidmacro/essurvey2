@@ -21,6 +21,10 @@ jobs:
         config:
           - {os: macos-latest,   r: 'release'}
           - {os: windows-latest, r: 'release'}
+          # Windows on R-devel is a combination CRAN runs and the rest of this
+          # matrix does not cover: the devel entry below is Linux-only. Without
+          # it, win-builder would be the only way to see this pairing.
+          - {os: windows-latest, r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,   r: 'release'}
           - {os: ubuntu-latest,   r: 'oldrel-1'}
