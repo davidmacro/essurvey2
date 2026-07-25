@@ -1,0 +1,338 @@
+---
+title: "The educational gradient in self-rated health"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{The educational gradient in self-rated health}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As a social epidemiologist, I need self-rated health broken
+> down by education and household income for the two ESS rounds that carried the
+> health-inequality module, so that I can test whether the educational gradient
+> in poor health widened between 2014 and 2023.
+
+Catalogue output below is real. Results from survey data are shown as code only —
+see `vignette("trust-trends")` for why.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## Which rounds carry the module
+
+Health inequality is a rotating module, so the first question is when it ran:
+
+```{r}
+ess_theme_rounds("Social inequalities in health")[, .(round, description)]
+#>    round                                                                       description
+#>    <int>                                                                            <char>
+#> 1:     7                    ESS round 7 - 2014. Immigration, Social inequalities in health
+#> 2:    11 ESS round 11 - 2023. Social inequalities in health, Gender in contemporary Europe
+```
+
+Rounds 7 (2014) and 11 (2023): a nine-year gap, one repeat of the module, and
+therefore a comparison of two cross-sections rather than a trend. Say so in the
+write-up — two points do not make a trajectory.
+
+There is a separate, older health theme, which is worth not confusing with this
+one:
+
+```{r}
+ess_theme_rounds("Health and care")[, .(round, description)]
+#>    round                                                                       description
+#>    <int>                                                                            <char>
+#> 1:     2 ESS round 2 - 2004. Health and care, Economic morality, Family work and wellbeing
+```
+
+Round 2's module asked different questions. The outcome used below — `health` —
+is a core variable present in every round, but the module's supporting variables
+are not, which is the reason to stay inside rounds 7 and 11.
+
+## What the module contains
+
+Variables come grouped, and the group is the module:
+
+```{r}
+v11 <- ess_variables(11)
+v11[group_name == "healthineq", .N]
+#> [1] 113
+
+v11[group_name == "healthineq", .(variable_name, variable_label)][1:5]
+#>    variable_name                                                variable_label
+#>           <char>                                                        <char>
+#> 1:       ctrlife                How much control over life in general nowadays
+#> 2:       etfruit                 How often eat fruit, excluding drinking juice
+#> 3:        eatveg         How often eat vegetables or salad, excluding potatoes
+#> 4:        dosprt Do sports or other physical activity, how many of last 7 days
+#> 5:       cgtsmok                                   Cigarette smoking behaviour
+```
+
+Round 7 has the same group, and comparing the two lists is how you find the
+module's stable core:
+
+```{r}
+v7 <- ess_variables(7)
+
+both <- intersect(v7[group_name == "healthineq", variable_name],
+                  v11[group_name == "healthineq", variable_name])
+length(both)
+
+setdiff(v11[group_name == "healthineq", variable_name],
+        v7[group_name == "healthineq", variable_name])
+```
+
+Anything in that `setdiff` is round 11 only and cannot enter a comparison.
+
+## Reading the outcome's codes before using it
+
+```{r}
+info <- ess_variable_info("health", round = 11)
+info$question
+#> [1] "How is your health in general? Would you say it is..."
+
+info$codes
+#>     value      label is_missing
+#>    <char>     <char>     <lgcl>
+#> 1:      1  Very good      FALSE
+#> 2:      2       Good      FALSE
+#> 3:      3       Fair      FALSE
+#> 4:      4        Bad      FALSE
+#> 5:      5   Very bad      FALSE
+#> 6:      7    Refusal       TRUE
+#> 7:      8 Don't know       TRUE
+#> 8:      9  No answer       TRUE
+```
+
+**The scale runs from good to bad.** 1 is *Very good*; 5 is *Very bad*. A higher
+number means worse health, which is the opposite of what "health" suggests and
+the opposite of most ESS scales, where higher means more of the thing named. A
+mean of `health` that goes up over time is health getting *worse*.
+
+Either reverse it on the way in, or define a dichotomy whose direction is in its
+name. The second is easier to report and easier to get right:
+
+```{r}
+# poor_health == TRUE means "Bad" or "Very bad".
+```
+
+The secondary outcome, activity limitation, runs the same way — and note that
+"No" is 3, not 0:
+
+```{r}
+ess_variable_info("hlthhmp", round = 11)$codes
+#>     value              label is_missing
+#>    <char>             <char>     <lgcl>
+#> 1:      1          Yes a lot      FALSE
+#> 2:      2 Yes to some extent      FALSE
+#> 3:                        No      FALSE
+#> 4:      7            Refusal       TRUE
+#> 5:      8         Don't know       TRUE
+#> 6:      9          No answer       TRUE
+```
+
+## The stratifiers
+
+Education, as `vignette("harmonising-variables")` sets out in more detail, needs
+its unusable codes removed by hand:
+
+```{r}
+ess_variable_info("eisced", round = 11)$codes[value %in% c("0", "55", "77")]
+#>     value                                   label is_missing
+#>    <char>                                  <char>     <lgcl>
+#> 1:      0 Not possible to harmonise into ES-ISCED      FALSE
+#> 2:     55                                   Other      FALSE
+#> 3:     77                                 Refusal       TRUE
+```
+
+Income is a decile, and the labels say something important about what kind:
+
+```{r}
+ess_variable_info("hinctnta", round = 11)$codes
+#>      value           label is_missing
+#>     <char>          <char>     <lgcl>
+#>  1:      1  J - 1st decile      FALSE
+#>  2:      2  R - 2nd decile      FALSE
+#> ...
+#> 10:     10 H - 10th decile      FALSE
+#> 11:     77         Refusal       TRUE
+#> 12:     88      Don't know       TRUE
+#> 13:     99       No answer       TRUE
+```
+
+The bands behind those deciles are country-specific: respondents were shown a
+card with their own country's income distribution. `hinctnta` is therefore a
+household's *relative position within its own country*, not an amount. That makes
+it directly comparable across countries — decile 1 means the same rank
+everywhere — and useless as an absolute income. Do not deflate it, convert it, or
+compare a Portuguese decile 8 with a Norwegian decile 8 in euros.
+
+Item non-response on income is heavy in every survey, and the ESS is no
+exception. Count it rather than dropping it silently:
+
+```{r}
+ess_missing_codes(11, variables = c("health", "eisced", "hinctnta", "agea", "gndr"))
+#>    variable_name  value         label
+#>           <char> <char>        <char>
+#> 1:        health      7       Refusal
+#> 2:        health      8    Don't know
+#> 3:        health      9     No answer
+#> 4:          gndr      9     No answer
+#> 5:          agea    999 Not available
+#> 6:        eisced     77       Refusal
+#> 7:        eisced     88    Don't know
+#> 8:        eisced     99     No answer
+#> 9:      hinctnta     77       Refusal
+```
+
+Four different missing-code conventions in five variables: 7/8/9, 9 alone, 999,
+and 77/88/99. This is why `recode_missings = TRUE` reads them per variable from
+the catalogue instead of applying one rule.
+
+## Downloading
+
+```{r}
+cols <- c("essround", "cntry", "idno", "anweight",
+          "health", "hlthhmp", "eisced", "hinctnta", "agea", "gndr")
+
+hi <- ess_round(c(7, 11), select = cols)
+#> ℹ Fetching 2 data files: "ESS7e02_3" and "ESS11e04_2".
+
+hi[, .N, by = essround]
+```
+
+`anweight` is the right weight for pooling countries; see `vignette("trust-trends")`
+for the reasoning.
+
+## Preparing the analysis variables
+
+```{r}
+hi[eisced %in% c(0L, 55L), eisced := NA_integer_]
+
+hi[, poor_health := fifelse(health >= 4L, 1L, 0L, na = NA_integer_)]
+hi[, limited := fifelse(hlthhmp %in% c(1L, 2L), 1L, 0L, na = NA_integer_)]
+
+# Three bands are easier to report than eight levels, and less sparse per country.
+hi[, edu3 := cut(eisced, breaks = c(0, 2, 4, 7), labels = c("Low", "Medium", "High"))]
+
+hi[, income3 := cut(hinctnta, breaks = c(0, 3, 7, 10),
+                    labels = c("Bottom 30%", "Middle 40%", "Top 30%"))]
+
+hi[, age_band := cut(agea, breaks = c(14, 34, 49, 64, Inf),
+                     labels = c("15-34", "35-49", "50-64", "65+"))]
+```
+
+`fifelse()` is used rather than `ifelse()` because it keeps the `NA` explicit:
+`health >= 4L` is `NA` where `health` is `NA`, and `na = NA_integer_` says so
+rather than quietly producing `0`.
+
+Now account for the cases lost, before reporting anything:
+
+```{r}
+hi[, .(
+  n = .N,
+  no_health = sum(is.na(health)),
+  no_edu = sum(is.na(eisced)),
+  no_income = sum(is.na(hinctnta)),
+  complete = sum(!is.na(health) & !is.na(eisced) & !is.na(hinctnta))
+), by = essround]
+```
+
+If income non-response differs a lot between the two rounds, a change in the
+gradient measured on complete cases may be a change in who answered. That
+belongs in the write-up.
+
+## The gradient
+
+Weighted prevalence of poor health by education, per round, age-standardised
+crudely by holding the age distribution out as a separate breakdown:
+
+```{r}
+gradient <- hi[!is.na(edu3) & !is.na(poor_health),
+  .(n = .N, pct_poor = round(100 * weighted.mean(poor_health, anweight), 1)),
+  by = .(essround, edu3)
+][order(essround, edu3)]
+
+dcast(gradient, edu3 ~ essround, value.var = "pct_poor")
+```
+
+The gradient's steepness is the quantity of interest — the low-education
+prevalence minus the high-education prevalence:
+
+```{r}
+steepness <- dcast(gradient, essround ~ edu3, value.var = "pct_poor")
+steepness[, gap := Low - High]
+steepness
+```
+
+Age is the obvious confounder, since the less-educated are older on average in
+most of these countries. Stratify:
+
+```{r}
+hi[!is.na(edu3) & !is.na(age_band) & !is.na(poor_health),
+  .(pct_poor = round(100 * weighted.mean(poor_health, anweight), 1)),
+  by = .(essround, age_band, edu3)
+] |> dcast(age_band + edu3 ~ essround, value.var = "pct_poor")
+```
+
+And by country, for round 11, with a floor on cell size so that a gap computed
+from a handful of respondents is not reported as though it were an estimate:
+
+```{r}
+by_country <- hi[essround == 11L & !is.na(edu3) & !is.na(poor_health),
+  .(n = .N, pct_poor = 100 * weighted.mean(poor_health, anweight)),
+  by = .(cntry, edu3)
+]
+
+wide <- dcast(by_country[n >= 50L], cntry ~ edu3, value.var = "pct_poor")
+wide[, gap := round(Low - High, 1)]
+wide[order(-gap)]
+```
+
+## Adjusting for income
+
+Whether the educational gradient survives controlling for income is the
+substantive question. A weighted logistic regression is the usual first pass:
+
+```{r}
+model_data <- hi[essround == 11L & !is.na(poor_health) & !is.na(edu3) &
+                   !is.na(income3) & !is.na(age_band)]
+
+fit <- glm(poor_health ~ edu3 + income3 + age_band + factor(gndr) + cntry,
+           data = model_data, family = quasibinomial(), weights = anweight)
+
+summary(fit)
+```
+
+`quasibinomial()` rather than `binomial()` because the weights are not integer
+frequencies, and `binomial()` would emit a warning about non-integer successes
+and, worse, report standard errors as though each weighted observation were a
+whole one.
+
+Those standard errors are still wrong, though — they assume simple random
+sampling, and the ESS is clustered and stratified. Round 11 publishes the design
+variables needed to fix that, and `vignette("design-based-estimates")` does the
+same model properly with `survey::svyglm()`. Treat the coefficients above as
+descriptive and the *p*-values as not yet computed.
+
+## What this vignette worked around
+
+* The module ran in rounds 7 and 11 only. `ess_theme_rounds()` establishes that
+  without downloading anything.
+* `health` is coded 1 = *Very good* to 5 = *Very bad*. Higher is worse. `hlthhmp`
+  codes "No" as 3.
+* `eisced` codes 0 and 55 are not flagged missing but are not education levels.
+* `hinctnta` is a within-country decile, comparable as a rank and meaningless as
+  an amount.
+* Five variables use four different missing-code conventions.
+* `glm(family = binomial())` with survey weights is the wrong family; the
+  standard errors need a design (next vignette).

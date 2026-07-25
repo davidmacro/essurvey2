@@ -1,0 +1,284 @@
+---
+title: "Building one comparable variable across rounds"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Building one comparable variable across rounds}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As a survey methodologist preparing a pooled ESS file, I need
+> to know which variant of each variable exists in each round and how its codes
+> are defined, so that I can build one comparable measure instead of silently
+> stacking incompatible classifications.
+
+Catalogue output below is real, from a session against the live catalogue.
+Anything computed from survey data is shown as code only — see
+`vignette("trust-trends")` for why numbers are not pasted in.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## The failure this avoids
+
+`ess_round(1:11, select = c("essround", "cntry", "edulvla"))` does not error. It
+returns a `data.table` in which `edulvla` is populated for rounds 1 to 4 and `NA`
+for rounds 5 to 11, because `ess_round()` stacks with `fill = TRUE`. Regress
+something on it and you have fitted a model to the first four rounds while
+believing you used eleven.
+
+The ESS renames and reclassifies variables between rounds — that is a
+consequence of harmonising 39 countries' education systems, ballot papers and
+income brackets, not carelessness. What the analyst owes the data is a check
+before the download, and `ess_variables()` is cheap enough to run eleven times.
+
+## An availability matrix
+
+One call per round, no survey data, no user ID:
+
+```{r}
+candidates <- c("edulvla", "edulvlb", "eisced", "eduyrs",
+                "hinctnta", "hincfel",
+                "wrkprty", "pbldmn", "sgnptit")
+
+availability <- rbindlist(lapply(1:11, function(r) {
+  present <- ess_variables(r)$variable_name
+  data.table(round = r, variable_name = candidates,
+             present = candidates %in% present)
+}))
+
+dcast(availability, variable_name ~ round, value.var = "present")
+#> Key: <variable_name>
+#>    variable_name     1     2     3     4     5     6     7     8     9    10    11
+#> 1:       edulvla  TRUE  TRUE  TRUE  TRUE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+#> 2:       edulvlb FALSE FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 3:        eduyrs  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 4:        eisced  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 5:       hincfel  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 6:      hinctnta FALSE FALSE FALSE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 7:        pbldmn  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE
+#> 8:       sgnptit  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE
+#> 9:       wrkprty  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE  TRUE FALSE FALSE
+```
+
+Four distinct patterns, each needing a different decision:
+
+* **Replaced at a round boundary.** `edulvla` (rounds 1–4) became `edulvlb`
+  (rounds 5–11). They are not the same classification; concatenating the columns
+  would be wrong.
+* **Available throughout.** `eisced` and `eduyrs` span the series. That is the
+  answer to the education problem, with one catch — below.
+* **Introduced mid-series.** `hinctnta` starts at round 4. Rounds 1–3 measured
+  income differently, so a decile series simply starts in 2008.
+* **Discontinued.** `wrkprty` and `pbldmn` stop after round 9. A political
+  participation index built on them ends there; `sgnptit` continues.
+
+That first pattern is exactly the trap in the opening paragraph, and the matrix
+is what turns it into a decision you made on purpose.
+
+## Education: use the harmonised variable, then look at its codes
+
+`eisced` is the ESS's own harmonisation of education into a common seven-level
+scheme, and the matrix above shows it in all eleven rounds. Before using it as a
+gradient, read the code list:
+
+```{r}
+ess_variable_info("eisced", round = 11)$codes
+#>      value                                               label is_missing
+#>     <char>                                              <char>     <lgcl>
+#>  1:      0             Not possible to harmonise into ES-ISCED      FALSE
+#>  2:      1              ES-ISCED I , less than lower secondary      FALSE
+#>  3:      2                        ES-ISCED II, lower secondary      FALSE
+#>  4:      3           ES-ISCED IIIb, lower tier upper secondary      FALSE
+#>  5:      4           ES-ISCED IIIa, upper tier upper secondary      FALSE
+#>  6:      5        ES-ISCED IV, advanced vocational, sub-degree      FALSE
+#>  7:      6     ES-ISCED V1, lower tertiary education, BA level      FALSE
+#>  8:      7 ES-ISCED V2, higher tertiary education, >= MA level      FALSE
+#>  9:     55                                               Other      FALSE
+#> 10:     77                                             Refusal       TRUE
+#> 11:     88                                          Don't know       TRUE
+#> 12:     99                                           No answer       TRUE
+```
+
+Note the `is_missing` column. Codes 77, 88 and 99 are flagged, so
+`recode_missings = TRUE` — the default — turns them into `NA`. Codes **0** and
+**55** are *not* flagged, and will not be touched by any missing-value handling,
+by this package or by the API.
+
+They are still meaningless as levels of education. "Not possible to harmonise
+into ES-ISCED" is a documentation outcome; "Other" is a residual. Leave them in
+and a mean of `eisced` is arithmetic over a scale that runs 0, 1…7, 55 — the 55s
+alone will dominate it, and `max(eisced)` will report 55 as the highest level of
+education in Europe.
+
+```{r}
+dt <- ess_round(11, select = c("essround", "cntry", "eisced", "agea", "anweight"))
+
+dt[, .N, by = eisced][order(eisced)]     # look for 0 and 55 before anything else
+
+dt[eisced %in% c(0L, 55L), eisced := NA_integer_]
+```
+
+This is the general point, not a fact about `eisced`. `is_missing` marks
+*non-response*. It does not mark codes that are substantively unusable for your
+particular analysis, and no automatic step can, because that depends on the
+analysis. Read the code list.
+
+## Ordered factors from the catalogue
+
+With the unusable codes gone, `ess_as_factor()` labels the rest. It reads the
+labels from the catalogue, since parquet carries codes only:
+
+```{r}
+ess_as_factor(dt, variables = "eisced")
+#> ✔ Converted 1 column to factor.
+
+dt[, .N, by = eisced]
+```
+
+`ess_as_factor()` modifies `dt` in place, `data.table` fashion. It also drops
+missing-flagged codes rather than making them levels, and leaves alone any column
+with more than `max_levels` codes — so a near-continuous variable does not become
+a factor with hundreds of levels.
+
+Keep a numeric copy if you want both a gradient and a labelled table:
+
+```{r}
+dt[, eisced_num := as.integer(eisced)]   # 1..8 over the surviving levels
+```
+
+For a linear gradient, `eduyrs` — years of full-time education, present in all
+eleven rounds — is often the easier instrument, at the cost of comparability
+between school systems.
+
+## Country-specific variables
+
+Some questions cannot be harmonised at all, because the response options are a
+national ballot paper. The catalogue lists both the template and every country's
+realisation of it:
+
+```{r}
+vars <- ess_variables(11)
+vars[grepl("^prtv", variable_name), .(variable_name, variable_label)][1:15]
+#>     variable_name                                                          variable_label
+#>            <char>                                                                  <char>
+#>  1:       prtvtxx                                  Party voted for in last national election, [country]
+#>  2:      prtvtdat                                    Party voted for in last national election, Austria
+#>  3:      prtvtebe                                    Party voted for in last national election, Belgium
+#>  4:      prtvtfbg                                   Party voted for in last national election, Bulgaria
+#> ...
+#>  9:      prtvtffr                          Party voted for in last national election, France (ballot 1)
+#> 10:      prtvgde1                                  Party voted for in last national election 1, Germany
+#> 11:      prtvgde2                                  Party voted for in last national election 2, Germany
+```
+
+`prtvtxx` is a template, not a column: the `xx` stands for a country suffix that
+also encodes which version of the question was asked. Passing `prtvtxx` to
+`select` is an error naming the column, because `select` is checked against the
+file itself rather than against the catalogue's list.
+
+The suffix letter changes between rounds when a country's party list changes, so
+the name is not stable across the series either. Read the columns you need per
+round and per country:
+
+```{r}
+party_cols <- vars[grepl("^prtv", variable_name) &
+                     variable_name != "prtvtxx", variable_name]
+
+# Germany has two columns in round 11 — first and second vote.
+vars[variable_name %in% c("prtvgde1", "prtvgde2"), .(variable_name, variable_label)]
+```
+
+`ess_variable_info()` gives each one its own party list, which is the mapping you
+would need for any cross-national recoding — into left/right blocs, government
+versus opposition, or whatever the analysis calls for:
+
+```{r}
+ess_variable_info("prtvtdat", round = 11)$codes
+```
+
+That recoding is a research decision this package deliberately does not make for
+you.
+
+## The variable list is a superset
+
+`ess_variables()` returns the catalogue's documentation of a data file, which
+includes entries with no column in that file: the `xx` templates above, and
+questionnaire items such as the higher household-grid slots that exist in the
+instrument but were never filled.
+
+So the matrix earlier tells you what the catalogue documents, which is a
+necessary check but not a sufficient one. `select` is validated against the
+parquet file, and that is the authority:
+
+```{r}
+tryCatch(
+  ess_round(11, select = c("essround", "prtvtxx")),
+  essurvey2_error_select = function(e) conditionMessage(e)
+)
+```
+
+Belt and braces for a scripted pipeline — resolve the columns against the file
+once, then read:
+
+```{r}
+have <- names(ess_read_file(ess_download_file(
+  ess_data_files(11, kind = "integrated")$doi
+)))
+
+setdiff(candidates, have)
+```
+
+## A pooled file, assembled deliberately
+
+Putting it together: one variable set, checked per round, with the rounds that
+cannot supply it excluded rather than filled with `NA`.
+
+```{r}
+wanted <- c("essround", "cntry", "idno", "anweight", "eisced", "eduyrs",
+            "agea", "gndr", "hinctnta", "ppltrst")
+
+usable <- rbindlist(lapply(1:11, function(r) {
+  present <- ess_variables(r)$variable_name
+  data.table(round = r, missing = paste(setdiff(wanted, present), collapse = ", "))
+}))
+usable
+#>    round  missing
+#> 1:     1 hinctnta
+#> 2:     2 hinctnta
+#> 3:     3 hinctnta
+#> 4:     4
+#> ...
+
+pooled <- ess_round(4:11, select = wanted)
+
+pooled[eisced %in% c(0L, 55L), eisced := NA_integer_]
+pooled[, .N, by = essround]
+```
+
+Rounds 1–3 are excluded because they cannot supply `hinctnta`, and the table
+above is the record of that decision. Whether to run the analysis twice — once
+on rounds 4–11 with income, once on 1–11 without — is a judgement about your
+question, not about the data.
+
+## What this vignette worked around
+
+* `edulvla` (rounds 1–4) and `edulvlb` (rounds 5–11) are different
+  classifications of the same concept. `eisced` spans the series; use it.
+* `eisced` codes 0 and 55 are not flagged as missing but are unusable as
+  education levels. `is_missing` means non-response, nothing more.
+* `hinctnta` begins at round 4; `wrkprty` and `pbldmn` end at round 9.
+* `ess_variables()` is a superset of a file's columns. `prtvtxx` is a template.
+  `select` is checked against the file, and is the authority.
+* `ess_round()` stacks with `fill = TRUE`, so an absent variable arrives as `NA`
+  rather than as an error. Check before you download.

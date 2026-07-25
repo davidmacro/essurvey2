@@ -41,8 +41,9 @@
 #' dt <- ess_round(10:11, select = c("essround", "cntry", "agea", "ppltrst"))
 #' dt[, .(mean_trust = mean(ppltrst, na.rm = TRUE)), by = .(essround, cntry)]
 #'
-#' # The self-completion file of round 11.
-#' sc <- ess_round(11, kind = "self_completion")
+#' # The self-completion file of round 10. Not every round has one —
+#' # `ess_data_files(rounds = 10)` shows which kinds a round publishes.
+#' sc <- ess_round(10, kind = "self_completion")
 #' }
 #'
 #' @export

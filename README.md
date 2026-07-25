@@ -181,6 +181,23 @@ options(essurvey2.cache_dir = "D:/data/ess-cache")  # somewhere else
 options(essurvey2.cache_dir = FALSE)                # switch caching off
 ```
 
+## Worked analyses
+
+Six vignettes each take one research task from question to result, and each is
+built around the traps that task runs into. None of them invent numbers: the
+catalogue output is real, and the parts that need a download are shown as code so
+that a revised edition cannot make the text wrong.
+
+| Vignette | The task, and what it has to get right |
+|---|---|
+| `vignette("essurvey2")` | Getting started: configuration, discovery, downloading, missing values, labels |
+| `vignette("trust-trends")` | Institutional trust across all 11 rounds. Choosing `anweight`; an item missing from round 1; a European average that changes when its countries do |
+| `vignette("harmonising-variables")` | One comparable education measure. `edulvla` became `edulvlb`; `eisced` codes 0 and 55 are not flagged missing but are not education levels |
+| `vignette("health-inequality")` | The educational gradient in self-rated health, rounds 7 and 11. `health` runs good-to-bad; `hinctnta` is a within-country decile |
+| `vignette("design-based-estimates")` | Confidence intervals that respect the clustered sample. Design variables are in the file from round 9, in SDDF files for 7–8, and absent before that |
+| `vignette("immigration-attitudes")` | An index over the six core items. Two response formats, two directions, two missing-code conventions |
+| `vignette("reproducible-provenance")` | Recording which editions and DOIs produced a result, so a failure to reproduce is diagnosable |
+
 ## Differences from the essurvey package
 
 Two of these are visible in the interface, and are consequences of how the API

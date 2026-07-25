@@ -52,6 +52,26 @@ happens in round 8.
 * Catalogue answers are memoised per session; `ess_catalogue_refresh()` forgets
   them.
 
+## Vignettes
+
+`vignette("essurvey2")` covers configuration, discovery and downloading. Six
+further vignettes work through a research task each, and are organised around what
+that task has to get right rather than around the package's functions:
+
+* `trust-trends` — institutional trust across all 11 rounds: weight choice,
+  an item absent from round 1, and country composition in a European average.
+* `harmonising-variables` — one comparable education measure when `edulvla`
+  became `edulvlb`, and why `eisced` codes 0 and 55 need removing by hand.
+* `health-inequality` — the educational gradient in self-rated health in rounds
+  7 and 11, where `health` runs good-to-bad and income is a within-country decile.
+* `design-based-estimates` — standard errors from `survey::svydesign()`, and
+  where the design variables are for each round.
+* `immigration-attitudes` — an index over the six core items, which mix two
+  response formats, two directions and two missing-code conventions.
+* `reproducible-provenance` — recording the editions and DOIs behind a result.
+
+**survey** is a new `Suggests` dependency, used by `design-based-estimates`.
+
 ## Errors
 
 API failures are raised as classed conditions — `essurvey2_error_user_id`,

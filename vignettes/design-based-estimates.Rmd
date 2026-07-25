@@ -1,0 +1,365 @@
+---
+title: "Standard errors that respect the ESS sample design"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Standard errors that respect the ESS sample design}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As a quantitative researcher submitting for publication, I need
+> confidence intervals and tests that account for the ESS's clustered, stratified
+> samples, so that I do not report significance that rests on an assumption of
+> simple random sampling that the ESS does not meet.
+
+This vignette uses **survey**, which is a `Suggests` dependency — install it
+separately. Catalogue output is real; results from survey data are shown as code
+only.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+library(survey)
+```
+
+## Why the default standard errors are wrong
+
+No ESS country draws a simple random sample of individuals. Samples are
+stratified by region and often by settlement size, and in most countries drawn in
+clusters — addresses within sampled areas. Respondents within a cluster resemble
+each other, so each additional interview in a cluster adds less information than
+an independent one would. `lm()`, `glm()` and `t.test()` assume otherwise, and
+the usual result is standard errors that are too small, intervals that are too
+narrow, and *p*-values that are too generous. Weights alone do not repair this:
+they correct the point estimate, not its variance.
+
+The fix needs three things from the data: the primary sampling unit, the stratum,
+and a weight. Whether the ESS publishes them depends on the round, which is the
+first thing to establish.
+
+## Where the design variables live
+
+From round 9, they are in the integrated file, in their own variable group:
+
+```{r}
+ess_variables(11)[group_name == "sampling", .(variable_name, variable_label)]
+#>    variable_name        variable_label
+#>           <char>                <char>
+#> 1:        domain       Sampling domain
+#> 2:          prob  Sampling probability
+#> 3:       stratum      Sampling stratum
+#> 4:           psu Primary sampling unit
+```
+
+Before round 9 they are not:
+
+```{r}
+c("psu", "stratum", "prob", "domain") %in% ess_variables(7)$variable_name
+#> [1] FALSE FALSE FALSE FALSE
+```
+
+Checking every round at once:
+
+```{r}
+design_vars <- c("psu", "stratum", "prob")
+
+rbindlist(lapply(1:11, function(r) {
+  present <- ess_variables(r)$variable_name
+  data.table(round = r, in_integrated = all(design_vars %in% present))
+}))
+#>     round in_integrated
+#>     <int>        <lgcl>
+#>  1:     1         FALSE
+#> ...
+#>  8:     8         FALSE
+#>  9:     9          TRUE
+#> 10:    10          TRUE
+#> 11:    11          TRUE
+```
+
+For rounds 7 and 8 the information is published separately, as sample design data
+files:
+
+```{r}
+ess_data_files(kind = "sample_design")[, .(round, file_label, doi, n_variables)]
+#>    round    file_label                    doi n_variables
+#>    <int>        <char>                 <char>       <int>
+#> 1:     7  ESS7SDDFe1_2  10.21338/ess7sddfe1_2          10
+#> 2:     8 ESS8SDDFe01_1 10.21338/ess8sddfe01_1          10
+```
+
+Two files, for two rounds. **Rounds 1–6 have neither**: no `psu` or `stratum` in
+the integrated file, and no SDDF published through this API. For those rounds you
+can weight, and you cannot compute a design-based variance from what the API
+serves. The honest options are to say so, to restrict the design-based part of
+the analysis to rounds 7–11, or to look for the older SDDF releases on the ESS
+web portal. Silently reporting simple-random-sample intervals for rounds 1–6 is
+not among them.
+
+## Rounds 9–11: the design is already there
+
+```{r}
+cols <- c("essround", "cntry", "idno", "anweight", "pspwght", "pweight",
+          "psu", "stratum", "prob", "domain",
+          "health", "eisced", "agea", "gndr")
+
+dt <- ess_round(11, select = cols)
+```
+
+Two things to check before building a design object.
+
+**Are the identifiers unique across countries?** `stratum` and `psu` are numbered
+within each country's own sample frame, so the same integer means different
+places in different countries. Combining rounds adds a second collision.
+
+```{r}
+dt[, .(strata = uniqueN(stratum), psus = uniqueN(psu)), by = cntry][1:5]
+
+# Distinct values overall versus summed within country — equal only if no reuse.
+dt[, uniqueN(stratum)]
+dt[, uniqueN(stratum), by = cntry][, sum(V1)]
+```
+
+If those two numbers differ, the codes are reused and must be made unique. Doing
+it unconditionally is harmless and safer than testing:
+
+```{r}
+dt[, stratum_id := paste(essround, cntry, stratum, sep = "_")]
+dt[, psu_id := paste(essround, cntry, psu, sep = "_")]
+```
+
+**How much is missing?** `svydesign()` will not accept `NA` in the strata or
+cluster variables:
+
+```{r}
+dt[, .(no_psu = sum(is.na(psu)), no_stratum = sum(is.na(stratum)),
+       no_weight = sum(is.na(anweight))), by = cntry][no_psu > 0 | no_stratum > 0]
+```
+
+Countries with no design information cannot join a clustered design. Drop them
+from the design-based part and name them in the write-up.
+
+### One country
+
+Start here, because a single country's design is unambiguous:
+
+```{r}
+options(survey.lonely.psu = "adjust")
+
+nl <- dt[cntry == "NL" & !is.na(psu) & !is.na(stratum) & !is.na(anweight)]
+
+des_nl <- svydesign(
+  ids = ~psu_id,
+  strata = ~stratum_id,
+  weights = ~anweight,
+  data = nl,
+  nest = TRUE
+)
+
+svymean(~I(health >= 4), des_nl, na.rm = TRUE)
+confint(svymean(~I(health >= 4), des_nl, na.rm = TRUE))
+```
+
+`nest = TRUE` tells **survey** that PSU codes are nested inside strata rather
+than being unique in their own right. `survey.lonely.psu = "adjust"` handles
+strata that contain a single PSU, which occur in ESS samples and would otherwise
+make the variance undefined; `"adjust"` centres such strata on the grand mean.
+It is the conventional choice, and it is a choice — record it.
+
+Compare against the naive interval to see the size of the correction:
+
+```{r}
+naive <- nl[!is.na(health), .(p = mean(health >= 4), n = .N)]
+naive[, se := sqrt(p * (1 - p) / n)]
+naive[, .(p, lower = p - 1.96 * se, upper = p + 1.96 * se)]
+```
+
+The design effect makes it concrete — how many independent observations this
+clustered sample is worth:
+
+```{r}
+svymean(~I(health >= 4), des_nl, na.rm = TRUE, deff = TRUE)
+```
+
+### All countries at once
+
+For cross-national estimates, country is a stratifying dimension: each country
+ran its own sample, so strata nest inside countries and no PSU spans a border.
+The combined identifiers built above already encode that.
+
+Derive every analysis variable *before* building the design. `svydesign()` takes a
+copy of the data, so a column added to `usable` afterwards is not visible to the
+design object.
+
+```{r}
+usable <- dt[!is.na(psu) & !is.na(stratum) & !is.na(anweight)]
+
+usable[eisced %in% c(0L, 55L), eisced := NA_integer_]
+usable[, edu3 := cut(eisced, c(0, 2, 4, 7), labels = c("Low", "Medium", "High"))]
+
+des <- svydesign(
+  ids = ~psu_id,
+  strata = ~stratum_id,
+  weights = ~anweight,
+  data = usable,
+  nest = TRUE
+)
+
+svyby(~I(health >= 4), ~cntry, des, svymean, na.rm = TRUE, vartype = c("se", "ci"))
+```
+
+That is the table from `vignette("health-inequality")`, now with intervals you can
+defend. And the regression from that vignette, done properly:
+
+```{r}
+fit <- svyglm(I(health >= 4) ~ edu3 + agea + factor(gndr) + cntry,
+              design = subset(des, !is.na(edu3)),
+              family = quasibinomial())
+
+summary(fit)
+exp(cbind(OR = coef(fit), confint(fit)))
+```
+
+`svyglm()` replaces both the point estimates and the variance, so the intervals
+above account for weighting, stratification and clustering together. Note the
+`subset(des, ...)` rather than filtering the data frame first: subsetting the
+design keeps the full stratum structure for the variance calculation, whereas
+dropping rows from the data and rebuilding loses strata that emptied.
+
+## Rounds 7 and 8: merge the SDDF file
+
+The SDDF file holds the design variables and the keys to attach them:
+
+```{r}
+sddf_files <- ess_data_files(kind = "sample_design")
+sddf7 <- sddf_files[round == 7]
+
+ess_variables(datafile_id = sddf7$datafile_id,
+              datafile_version = sddf7$datafile_version)[, .(variable_name, variable_label)]
+#>     variable_name                     variable_label
+#>            <char>                             <char>
+#>  1:          name                   Title of dataset
+#>  2:      essround                          ESS round
+#>  3:       edition                            Edition
+#>  4:      proddate                    Production date
+#>  5:         cntry                            Country
+#>  6:          idno Respondent's identification number
+#>  7:           psu              Primary sampling unit
+#>  8:        domain                             Domain
+#>  9:       stratum                   Sampling stratum
+#> 10:          prob               Sampling probability
+```
+
+`cntry` and `idno` together identify a respondent, which is the join key.
+`ess_data()` fetches the file by DOI, since `ess_round()` covers only the file
+kinds that are round-level questionnaires:
+
+```{r}
+sddf <- ess_data(sddf7$doi, select = c("cntry", "idno", "psu", "stratum", "prob"))
+
+main7 <- ess_round(7, select = c("essround", "cntry", "idno", "anweight",
+                                 "health", "eisced", "agea", "gndr"))
+```
+
+Check the join before trusting it. `idno` is unique within a country, not across
+the survey, so the key is the pair:
+
+```{r}
+sddf[, .N, by = .(cntry, idno)][N > 1L]        # expect no rows
+main7[, .N, by = .(cntry, idno)][N > 1L]       # expect no rows
+
+setdiff(unique(main7$cntry), unique(sddf$cntry))
+setdiff(unique(sddf$cntry), unique(main7$cntry))
+```
+
+Countries in the integrated file but not in the SDDF have no design data for that
+round — the same situation as the `NA`s in round 11, arriving by a different
+route.
+
+```{r}
+merged <- merge(main7, sddf, by = c("cntry", "idno"), all.x = TRUE)
+
+merged[, .(n = .N, matched = sum(!is.na(psu))), by = cntry][matched < n]
+```
+
+`all.x = TRUE` keeps every respondent so that the unmatched ones stay visible and
+countable. An inner join would drop them and quietly shrink the sample.
+
+From here it is the round 11 procedure:
+
+```{r}
+merged[, stratum_id := paste(cntry, stratum, sep = "_")]
+merged[, psu_id := paste(cntry, psu, sep = "_")]
+
+des7 <- svydesign(
+  ids = ~psu_id, strata = ~stratum_id, weights = ~anweight,
+  data = merged[!is.na(psu) & !is.na(stratum)], nest = TRUE
+)
+
+svyby(~I(health >= 4), ~cntry, des7, svymean, na.rm = TRUE, vartype = "ci")
+```
+
+Note that `anweight` comes from the integrated file, not from the SDDF. `prob`,
+the sampling probability, is the raw inclusion probability; the ESS's published
+weights already incorporate it along with non-response and post-stratification
+adjustments. Use the published weight, not `1 / prob`.
+
+## Comparing two rounds
+
+For the round 7 versus round 11 comparison, build one design over the stacked
+data with the round in the identifiers — which is what the `essround` prefix
+earlier was for:
+
+```{r}
+pooled <- rbindlist(list(
+  merged[, .(essround, cntry, idno, anweight, psu, stratum, health, eisced, agea, gndr)],
+  dt[, .(essround, cntry, idno, anweight, psu, stratum, health, eisced, agea, gndr)]
+), use.names = TRUE)
+
+pooled[, stratum_id := paste(essround, cntry, stratum, sep = "_")]
+pooled[, psu_id := paste(essround, cntry, psu, sep = "_")]
+
+pooled[eisced %in% c(0L, 55L), eisced := NA_integer_]
+pooled[, edu3 := cut(eisced, c(0, 2, 4, 7), labels = c("Low", "Medium", "High"))]
+pooled[, round_f := factor(essround)]
+
+des_both <- svydesign(
+  ids = ~psu_id, strata = ~stratum_id, weights = ~anweight,
+  data = pooled[!is.na(psu) & !is.na(stratum)], nest = TRUE
+)
+
+svyby(~I(health >= 4), ~essround, des_both, svymean, na.rm = TRUE, vartype = "ci")
+
+fit_both <- svyglm(I(health >= 4) ~ round_f * edu3 + agea + cntry,
+                   design = subset(des_both, !is.na(edu3)),
+                   family = quasibinomial())
+
+summary(fit_both)
+```
+
+The interaction is the test the user story asked for: whether the educational
+gradient differs between 2014 and 2023. Two cross-sections nine years apart
+treated as independent samples — which they are, the ESS being repeated
+cross-sectional rather than a panel.
+
+## What this vignette worked around
+
+* Design variables are in the integrated file from round 9 only; rounds 7 and 8
+  publish them as separate SDDF files; rounds 1–6 have neither through this API.
+* `psu` and `stratum` are numbered within country, so codes collide when
+  countries or rounds are pooled. Build compound identifiers.
+* `nest = TRUE` and `survey.lonely.psu = "adjust"` are both needed in practice
+  with ESS samples.
+* The SDDF join key is `cntry` + `idno` together; `idno` alone is not unique.
+  Use `all.x = TRUE` so unmatched respondents stay countable.
+* Use the published `anweight`, not `1 / prob`.
+* `subset()` the design rather than filtering the data and rebuilding, or the
+  variance loses emptied strata.

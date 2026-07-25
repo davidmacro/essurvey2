@@ -1,0 +1,334 @@
+---
+title: "Trends in institutional trust across countries"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Trends in institutional trust across countries}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As a comparative political sociologist, I need a weighted
+> country-by-round series of trust in national institutions covering the whole
+> ESS, so that I can describe trends that are comparable across countries and
+> defensible under the ESS's own weighting guidance.
+
+Nothing in this vignette is evaluated when the package is built, because every
+download needs a user ID. The catalogue output shown below is real, copied from a
+session run against the live catalogue. Results computed from survey data are
+deliberately *not* pasted in: ESS editions are revised, and a number printed here
+would quietly stop matching what you get. Run the code and read your own numbers.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## The question
+
+Has trust in national political institutions fallen across Europe since 2002,
+and does the answer depend on which countries you count?
+
+That second clause is the whole difficulty. The ESS is not a panel of countries:
+39 have taken part at least once, and only eleven have been in every round. A
+raw European average over rounds therefore mixes a change in attitudes with a
+change in who was asked.
+
+## Finding the items
+
+Trust is part of the *Politics* core module, so it is present in every round.
+`ess_theme_rounds()` confirms that before you download anything:
+
+```{r}
+ess_theme_rounds("Politics")[, .(round)]
+#>     round
+#>  1:     1
+#>  2:     2
+#> ...
+#> 11:    11
+```
+
+Variables in an integrated file are organised into groups, which is usually a
+quicker way in than searching labels:
+
+```{r}
+vars <- ess_variables(11)
+unique(vars[, .(group_name, group_label)])
+#>      group_name                                                      group_label
+#>          <char>                                                           <char>
+#>  1:   mandatory                                  Identifier and weight variables
+#>  2:       media                                           Media and social trust
+#>  3:    politics                                                         Politics
+#> ...
+```
+
+The trust battery itself:
+
+```{r}
+vars[grepl("^trst", variable_name), .(variable_name, variable_label)]
+#>    variable_name                   variable_label
+#>           <char>                           <char>
+#> 1:       trstprl    Trust in country's parliament
+#> 2:       trstlgl        Trust in the legal system
+#> 3:       trstplc              Trust in the police
+#> 4:       trstplt             Trust in politicians
+#> 5:       trstprt       Trust in political parties
+#> 6:        trstep Trust in the European Parliament
+#> 7:        trstun      Trust in the United Nations
+```
+
+All seven are 0–10 scales with the same missing codes, which is worth checking
+rather than assuming — batteries that look uniform often are not (see
+`vignette("immigration-attitudes")` for one that is not):
+
+```{r}
+ess_variable_info("trstprl", round = 11)$codes
+#>      value           label is_missing
+#>     <char>          <char>     <lgcl>
+#>  1:      0 No trust at all      FALSE
+#>  2:      1               1      FALSE
+#> ...
+#> 11:     10  Complete trust      FALSE
+#> 12:     77         Refusal       TRUE
+#> 13:     88      Don't know       TRUE
+#> 14:     99       No answer       TRUE
+```
+
+### One item is not in round 1
+
+`trstprt` — trust in political parties — was added in round 2. Checking the
+whole series before building an index costs one catalogue call per round and
+saves a misleading trend:
+
+```{r}
+items <- c("trstprl", "trstlgl", "trstplc", "trstplt", "trstprt")
+
+availability <- rbindlist(lapply(1:11, function(r) {
+  data.table(round = r, variable_name = items,
+             present = items %in% ess_variables(r)$variable_name)
+}))
+
+dcast(availability, variable_name ~ round, value.var = "present")
+#> Key: <variable_name>
+#>    variable_name     1    2    3    4    5    6    7    8    9   10   11
+#> 1:       trstlgl  TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+#> 2:       trstplc  TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+#> 3:       trstplt  TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+#> 4:       trstprl  TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+#> 5:       trstprt FALSE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE TRUE
+```
+
+`ess_round()` stacks rounds with `fill = TRUE`, so round 1 would simply carry
+`NA` for `trstprt`. A row mean over the five items would then rest on four items
+in round 1 and five thereafter — a discontinuity manufactured by the analyst,
+not by respondents. Two honest options: drop `trstprt`, or start at round 2.
+This vignette drops it and keeps all eleven rounds.
+
+## Which weight
+
+Round 11's mandatory group carries four weights, and the choice between them
+matters more than most of the modelling that follows:
+
+```{r}
+vars[grepl("wght|weight", variable_name), .(variable_name, variable_label)]
+#>    variable_name                                                    variable_label
+#>           <char>                                                            <char>
+#> 1:       dweight                                                     Design weight
+#> 2:       pspwght                Post-stratification weight including design weight
+#> 3:       pweight Population size weight (must be combined with dweight or pspwght)
+#> 4:      anweight                                                   Analysis weight
+#> 5:       weighta                                         Weight of respondent (kg)
+```
+
+Five hits, four weights. `weighta` is the respondent's body weight in kilograms,
+from the health module — a reminder that a name pattern is a search, not a
+selection, and that reading the labels is not optional. The variable group is the
+safer filter here: the four survey weights are all in `mandatory`, and `weighta`
+is not.
+
+The catalogue documents `anweight` for itself, and the wording settles the
+question:
+
+```{r}
+ess_variable_info("anweight", round = 11)$description
+#> [1] "This weight is suitable for all types of analysis, including when you are
+#>      studying just one country, when you compare across countries, or when you
+#>      are studying groups of countries. For more information, please see the
+#>      document \"Weighting ESS data\" (User guide).
+#>      Ukraine: Post-stratification adjustment has been set to 1.00 for all
+#>      cases. For more information see section on Country documentation."
+```
+
+So: use `anweight`, and it is available in all eleven rounds. Two footnotes.
+
+First, the catalogue's `role` field still marks `pspwght` as the default weight,
+which predates `anweight`:
+
+```{r}
+vars[role == "DefaultWeight", .(variable_name, variable_label)]
+#>    variable_name                                     variable_label
+#>           <char>                                             <char>
+#> 1:       pspwght Post-stratification weight including design weight
+```
+
+Take `anweight`'s own description over that tag. `pspwght` alone weights every
+country to the same total, which is what you want *within* a country and wrong
+the moment you pool.
+
+Second, `anweight` is the post-stratification weight scaled by the population
+size weight. You do not have to take that on trust — check it on the data you
+downloaded:
+
+```{r}
+dt <- ess_round(11, select = c("anweight", "pspwght", "pweight"))
+dt[, summary(anweight - pspwght * pweight)]
+```
+
+## Downloading
+
+Five items, a country code, a round number and a weight: nine columns out of the
+600–700 each round holds. Because parquet is columnar, `select` is the difference
+between a few megabytes and a few hundred.
+
+```{r}
+items <- c("trstprl", "trstlgl", "trstplc", "trstplt")
+
+trust <- ess_round(
+  1:11,
+  select = c("essround", "cntry", "idno", "anweight", items)
+)
+#> ℹ Fetching 11 data files: "ESS1e06_7", "ESS2e03_6", … and "ESS11e04_2".
+
+dim(trust)
+```
+
+The first call downloads; every call after that reads from the cache, in this
+session or in six months' time:
+
+```{r}
+ess_cache_list()[, .(file, size)]
+```
+
+## An index, and what to do about partial answers
+
+```{r}
+trust[, n_answered := rowSums(!is.na(.SD)), .SDcols = items]
+trust[, trust_index := rowMeans(.SD, na.rm = TRUE), .SDcols = items]
+
+trust[, .N, by = n_answered][order(n_answered)]
+```
+
+A row mean with `na.rm = TRUE` averages whatever is there, so a respondent who
+answered one item of four gets an index built from that one item. Require a
+minimum instead, and say what you required:
+
+```{r}
+trust[n_answered < 3L, trust_index := NA_real_]
+```
+
+## The country composition problem
+
+`ess_countries()` reports how many rounds each country appears in:
+
+```{r}
+countries <- ess_countries()
+countries[, .N, by = n_rounds][order(-n_rounds)]
+
+balanced <- countries[n_rounds == 11L, country_code]
+balanced
+#>  [1] "BE" "FI" "FR" "HU" "IE" "NL" "NO" "PT" "SI" "CH" "GB"
+```
+
+Eleven countries of 39 have been in every round. Now the two series side by
+side — everyone who happened to be in each round, against the fixed eleven:
+
+```{r}
+setkey(trust, essround)
+
+series <- trust[
+  !is.na(trust_index),
+  .(all_participants = weighted.mean(trust_index, anweight)),
+  by = essround
+]
+
+series[
+  trust[cntry %in% balanced & !is.na(trust_index),
+        .(balanced_panel = weighted.mean(trust_index, anweight)),
+        by = essround],
+  on = "essround"
+][order(essround)]
+```
+
+Where the two columns diverge, the divergence is composition, not opinion. Report
+the balanced panel, or report both.
+
+## Country trends
+
+Per country and round, with the number of respondents behind each figure:
+
+```{r}
+by_country <- trust[
+  !is.na(trust_index),
+  .(n = .N, trust = round(weighted.mean(trust_index, anweight), 2)),
+  by = .(cntry, essround)
+]
+
+dcast(by_country[cntry %in% balanced], cntry ~ essround, value.var = "trust")
+```
+
+First round to last, for countries observed at both ends:
+
+```{r}
+change <- by_country[
+  , .(first = essround[which.min(essround)], last = essround[which.max(essround)],
+      from = trust[which.min(essround)], to = trust[which.max(essround)],
+      n_rounds = .N),
+  by = cntry
+][n_rounds >= 8L]
+
+change[, delta := round(to - from, 2)]
+change[order(delta), .(cntry, first, last, from, to, delta)]
+```
+
+Two cautions on that table. The endpoints are different calendar years for
+different countries, since not every country is in every round. And a difference
+of means says nothing about whether it is distinguishable from noise — for that
+you need standard errors that respect the ESS's clustered sample, which is
+`vignette("design-based-estimates")`.
+
+## Recording what you used
+
+Editions are revised. The trend you just computed belongs to a specific set of
+files, and `ess_rounds()` names them:
+
+```{r}
+ess_rounds()[, .(round, file_label, edition)]
+#>     round file_label edition
+#>     <int>     <char>  <char>
+#>  1:     1  ESS1e06_7     6.7
+#>  2:     2  ESS2e03_6     3.6
+#> ...
+#> 11:    11 ESS11e04_2     4.2
+```
+
+`vignette("reproducible-provenance")` turns that into a citation table to keep
+beside the results.
+
+## What this vignette worked around
+
+* `trstprt` is absent from round 1, and stacking would have hidden that behind
+  `NA`. Checking availability across rounds is cheap; discovering it in a
+  referee report is not.
+* `anweight` is the weight for this job, in every round. `pspwght` is still
+  tagged `DefaultWeight` in the catalogue.
+* A European mean over rounds confounds attitude change with country
+  composition. The balanced panel of eleven is one defensible answer.
+* `rowMeans(na.rm = TRUE)` silently accepts one item out of four. Set a
+  threshold.

@@ -1,0 +1,394 @@
+---
+title: "An index of attitudes to immigration"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{An index of attitudes to immigration}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As a researcher of public opinion, I need a comparable summary
+> measure of attitudes to immigration for the rounds that carried the immigration
+> module, so that I can compare countries and compare 2002 with 2014 without the
+> comparison being an artefact of how the items were coded.
+
+Catalogue output below is real. Results from survey data are shown as code only.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## Which rounds
+
+```{r}
+ess_theme_rounds("Immigration")[, .(round, description)]
+#>    round                                                        description
+#>    <int>                                                             <char>
+#> 1:     1               ESS round 1 - 2002. Immigration, Citizen involvement
+#> 2:     7     ESS round 7 - 2014. Immigration, Social inequalities in health
+#> 3:     8 ESS round 8 - 2016. Welfare attitudes, Attitudes to climate change
+```
+
+Rounds 1 and 7 ran the module as a headline rotating module — their descriptions
+say so. Round 8 is tagged with the theme but its headline modules were welfare and
+climate; it carried immigration items inside those. So the module comparison is
+rounds 1 and 7, and round 8 can contribute the core items if you want a third
+point. The next section shows how to check which, rather than assuming.
+
+## Finding the items, and why the variable group is not enough
+
+Variables are grouped, and the immigration group is the natural place to look:
+
+```{r}
+v1 <- ess_variables(1)
+v7 <- ess_variables(7)
+
+v1[group_name == "immigration", .N]
+#> [1] 58
+
+v7[group_name == "immigration", .N]
+#> [1] 35
+```
+
+Round 1 documented 58 immigration variables and round 7 documented 35 — the
+module was rebuilt, not repeated item for item. Now round 8:
+
+```{r}
+v8 <- ess_variables(8)
+v8[group_name == "immigration", .(variable_name, variable_label)]
+#> Empty data.table (0 rows and 2 cols): variable_name,variable_label
+```
+
+Round 8 has **no** `immigration` group at all. Select by group and you would
+conclude that round 8 asked nothing about immigration. It did — and so, it turns
+out, does round 7 outside its immigration group.
+
+The six items this vignette uses are the long-running core battery: three
+admission items and three consequence items. Ask the catalogue where they live in
+each round:
+
+```{r}
+core <- c("imsmetn", "imdfetn", "impcntr", "imbgeco", "imueclt", "imwbcnt")
+
+rbindlist(lapply(c(1, 7, 8), function(r) {
+  v <- ess_variables(r)
+  cbind(round = r, v[variable_name %in% core, .(variable_name, group_name)])
+}))[, dcast(.SD, variable_name ~ round, value.var = "group_name")]
+#>    variable_name           1        7        8
+#>           <char>      <char>   <char>   <char>
+#> 1:       imbgeco immigration politics politics
+#> 2:       imdfetn immigration politics politics
+#> 3:       impcntr immigration politics politics
+#> 4:       imsmetn immigration politics politics
+#> 5:       imueclt immigration politics politics
+#> 6:       imwbcnt immigration politics politics
+```
+
+All six exist in all three rounds — but they are in the **`immigration` group in
+round 1 and the `politics` group in rounds 7 and 8**. The reason is
+straightforward once seen: in 2002 these were the rotating module. They worked, so
+the ESS promoted them into the core questionnaire. From round 7 the `immigration`
+group holds that round's *new* rotating items — the qualification-for-immigration
+battery, the aljewlv/almuslv/algyplv items — while the six graduates sit with the
+core politics block.
+
+So the group tells you which questionnaire section an item occupied *in that
+round*, which is exactly what you want when exploring a module and exactly what
+you must not use as a selection rule across rounds. **Groups are for discovery;
+names are for selection.** Confirm presence by name:
+
+```{r}
+data.table(variable = core,
+           r1 = core %in% v1$variable_name,
+           r7 = core %in% v7$variable_name,
+           r8 = core %in% v8$variable_name)
+#>    variable     r1     r7     r8
+#>      <char> <lgcl> <lgcl> <lgcl>
+#> 1:  imsmetn   TRUE   TRUE   TRUE
+#> 2:  imdfetn   TRUE   TRUE   TRUE
+#> 3:  impcntr   TRUE   TRUE   TRUE
+#> 4:  imbgeco   TRUE   TRUE   TRUE
+#> 5:  imueclt   TRUE   TRUE   TRUE
+#> 6:  imwbcnt   TRUE   TRUE   TRUE
+```
+
+The rotating module's own items are where the group *is* the right tool — for
+finding what round 7 asked that round 1 did not:
+
+```{r}
+setdiff(v7[group_name == "immigration", variable_name],
+        v1[group_name == "immigration", variable_name])
+```
+
+## The three ways these items differ from each other
+
+This battery looks uniform and is not. Read all six code lists before combining
+anything.
+
+```{r}
+ess_variable_info("impcntr", round = 7)$codes
+#>     value                            label is_missing
+#>    <char>                           <char>     <lgcl>
+#> 1:      1 Allow many to come and live here      FALSE
+#> 2:      2                       Allow some      FALSE
+#> 3:      3                      Allow a few      FALSE
+#> 4:      4                       Allow none      FALSE
+#> 5:      7                          Refusal       TRUE
+#> 6:      8                       Don't know       TRUE
+#> 7:      9                        No answer       TRUE
+```
+
+```{r}
+ess_variable_info("imbgeco", round = 7)$codes
+#>      value                label is_missing
+#>     <char>               <char>     <lgcl>
+#>  1:      0  Bad for the economy      FALSE
+#>  2:      1                    1      FALSE
+#> ...
+#> 11:     10 Good for the economy      FALSE
+#> 12:     77              Refusal       TRUE
+#> 13:     88           Don't know       TRUE
+#> 14:     99            No answer       TRUE
+```
+
+Three differences, each of which will silently corrupt an index:
+
+1. **Different ranges.** `imsmetn`, `imdfetn` and `impcntr` run 1–4.
+   `imbgeco`, `imueclt` and `imwbcnt` run 0–10. An unweighted mean of the six is
+   dominated by the 0–10 items simply because they are wider.
+
+2. **Opposite directions.** On the 1–4 items, 1 is *Allow many* and 4 is *Allow
+   none*: **higher means more restrictive**. On the 0–10 items, 0 is *Bad for the
+   economy* / *Cultural life undermined* / *Worse place to live* and 10 is the
+   positive pole: **higher means more positive**. Average them as they stand and
+   the two halves partly cancel out. The resulting index will look reassuringly
+   mid-scale and mean nothing.
+
+3. **Different missing codes.** 7/8/9 on the 1–4 items, 77/88/99 on the 0–10
+   items:
+
+```{r}
+ess_missing_codes(7, variables = core)
+#>     variable_name  value      label
+#>            <char> <char>     <char>
+#>  1:       imsmetn      7    Refusal
+#>  2:       imsmetn      8 Don't know
+#>  3:       imsmetn      9  No answer
+#> ...
+#> 10:       imbgeco     77    Refusal
+#> 11:       imbgeco     88 Don't know
+#> 12:       imbgeco     99  No answer
+#> ...
+```
+
+That third one is the dangerous one, because a plausible-looking manual recode
+gets it wrong in both directions. Treat 7/8/9 as missing on `imbgeco` and you
+throw away three legitimate points near the positive end of a 0–10 scale. Treat
+77/88/99 as the only missing codes on `impcntr` and every refusal enters your
+index as a 7 on a scale whose maximum is 4 — inflating the restrictive end.
+
+Let the default handle it. `recode_missings = TRUE` reads each variable's own
+codes from the catalogue:
+
+```{r}
+im <- ess_round(c(1, 7), select = c("essround", "cntry", "idno", "anweight", core))
+#> ℹ Fetching 2 data files: "ESS1e06_7" and "ESS7e02_3".
+
+im[, lapply(.SD, function(x) c(min = min(x, na.rm = TRUE), max = max(x, na.rm = TRUE))),
+   .SDcols = core]
+```
+
+Those ranges should be 1–4 for the first three and 0–10 for the rest. Anything
+larger means missing codes survived, and the index would be built on them.
+
+### The codes are stable between rounds 1 and 7
+
+Worth confirming, since a rescaling that is right for one round and wrong for the
+other is worse than no rescaling:
+
+```{r}
+identical(ess_variable_info("impcntr", round = 1)$codes,
+          ess_variable_info("impcntr", round = 7)$codes)
+
+identical(ess_variable_info("imbgeco", round = 1)$codes,
+          ess_variable_info("imbgeco", round = 7)$codes)
+```
+
+## Building the index
+
+Put every item on 0–1, with 1 meaning the most pro-immigration response. Both
+transformations then read the same way round.
+
+```{r}
+admission <- c("imsmetn", "imdfetn", "impcntr")   # 1..4, higher = more restrictive
+consequence <- c("imbgeco", "imueclt", "imwbcnt") # 0..10, higher = more positive
+
+# Reverse and rescale: 1 -> 1.00, 4 -> 0.00
+im[, (paste0(admission, "_s")) := lapply(.SD, function(x) (4 - x) / 3),
+   .SDcols = admission]
+
+# Rescale only: 0 -> 0.00, 10 -> 1.00
+im[, (paste0(consequence, "_s")) := lapply(.SD, function(x) x / 10),
+   .SDcols = consequence]
+
+scaled <- paste0(c(admission, consequence), "_s")
+
+im[, lapply(.SD, function(x) round(range(x, na.rm = TRUE), 3)), .SDcols = scaled]
+```
+
+Check the reversal did what you meant, on the raw and rescaled columns together —
+a sign error here is invisible downstream:
+
+```{r}
+im[, .(mean_raw = mean(impcntr, na.rm = TRUE),
+       mean_scaled = mean(impcntr_s, na.rm = TRUE))]
+
+im[, .N, keyby = .(impcntr, impcntr_s)]
+```
+
+`impcntr == 1` ("Allow many") must map to `impcntr_s == 1`, and `impcntr == 4`
+("Allow none") to `0`.
+
+Now the index, with a completeness rule stated rather than implied:
+
+```{r}
+im[, n_items := rowSums(!is.na(.SD)), .SDcols = scaled]
+im[, pro_immigration := rowMeans(.SD, na.rm = TRUE), .SDcols = scaled]
+im[n_items < 4L, pro_immigration := NA_real_]
+
+im[, .N, keyby = n_items]
+```
+
+## Does it hold together?
+
+Cronbach's alpha, on complete cases, per round. Six lines of arithmetic and no
+extra dependency:
+
+```{r}
+cronbach_alpha <- function(dt, cols) {
+  m <- as.matrix(dt[, ..cols])
+  m <- m[stats::complete.cases(m), , drop = FALSE]
+  k <- ncol(m)
+  (k / (k - 1)) * (1 - sum(apply(m, 2, stats::var)) / stats::var(rowSums(m)))
+}
+
+im[, .(alpha = round(cronbach_alpha(.SD, scaled), 3), n = .N),
+   by = essround, .SDcols = scaled]
+```
+
+Run it per country as well. An index that is coherent pooled can fall apart in
+individual countries, which is a finding about comparability rather than a
+nuisance:
+
+```{r}
+im[, .(alpha = round(cronbach_alpha(.SD, scaled), 3), n = .N),
+   by = .(essround, cntry), .SDcols = scaled][order(alpha)][1:10]
+```
+
+Two subscales are often the better answer. Admission and consequence are
+conceptually distinct, they were asked with different response formats, and their
+correlation is a result worth reporting rather than assuming away:
+
+```{r}
+im[, admission_idx := rowMeans(.SD, na.rm = TRUE), .SDcols = paste0(admission, "_s")]
+im[, consequence_idx := rowMeans(.SD, na.rm = TRUE), .SDcols = paste0(consequence, "_s")]
+
+im[, .(r = round(cor(admission_idx, consequence_idx, use = "complete.obs"), 3)),
+   by = essround]
+
+im[, .(alpha_adm = round(cronbach_alpha(.SD, paste0(admission, "_s")), 3)),
+   by = essround, .SDcols = paste0(admission, "_s")]
+```
+
+Mixing a 4-point and an 11-point item in one mean gives the wider item more
+influence over the total even after rescaling, because it has more variance to
+contribute. Rescaling equalises the range, not the variance. If the single index
+matters, standardise each item instead — and say which you did.
+
+## Country and round comparison
+
+```{r}
+by_country <- im[!is.na(pro_immigration),
+  .(n = .N, index = round(weighted.mean(pro_immigration, anweight), 3)),
+  by = .(essround, cntry)
+]
+
+wide <- dcast(by_country, cntry ~ essround, value.var = "index")
+setnames(wide, c("1", "7"), c("r1_2002", "r7_2014"))
+wide[!is.na(r1_2002) & !is.na(r7_2014), change := round(r7_2014 - r1_2002, 3)]
+wide[order(-change)]
+```
+
+Only countries in both rounds can appear in `change`, and there are fewer of them
+than either round has:
+
+```{r}
+ess_country_rounds("NL")[round %in% c(1, 7), .(round, file_label)]
+
+im[, uniqueN(cntry), by = essround]
+wide[!is.na(change), .N]
+```
+
+The subscales separately, since they can move in opposite directions — becoming
+more positive about immigration's effects while wanting less of it is a coherent
+position and a real pattern:
+
+```{r}
+im[!is.na(admission_idx) & !is.na(consequence_idx),
+  .(admission = round(weighted.mean(admission_idx, anweight), 3),
+    consequence = round(weighted.mean(consequence_idx, anweight), 3)),
+  by = .(essround)
+]
+```
+
+As in the other vignettes, these are point estimates without design-based
+standard errors. Rounds 1 and 7 are also the awkward case for that: round 7's
+design variables need the SDDF file and round 1 has none published through this
+API. See `vignette("design-based-estimates")`.
+
+## Adding round 8
+
+The core items are in round 8 even though the group is not, so a third point is
+one argument away:
+
+```{r}
+im3 <- ess_round(c(1, 7, 8), select = c("essround", "cntry", "idno", "anweight", core))
+```
+
+Before pooling, verify the codes did not shift:
+
+```{r}
+lapply(core, function(v) {
+  c8 <- ess_variable_info(v, round = 8)$codes
+  c7 <- ess_variable_info(v, round = 7)$codes
+  data.table(variable = v, identical = identical(c7, c8))
+}) |> rbindlist()
+```
+
+Report round 8 as the core items only, not as the module. It is not the same
+instrument, and the surrounding questions differ — which affects answers.
+
+## What this vignette worked around
+
+* The six core items are in the `immigration` group in round 1 and the `politics`
+  group in rounds 7 and 8, where the `immigration` group holds that round's new
+  rotating items instead. Round 8 has no `immigration` group at all. Groups are
+  for discovery; names are for selection.
+* The battery mixes 1–4 and 0–10 response formats.
+* The two halves run in opposite directions: higher is *more restrictive* on the
+  admission items and *more positive* on the consequence items.
+* Missing codes differ within the battery — 7/8/9 against 77/88/99 — so a
+  hand-written recode gets one half wrong whichever convention it picks. The
+  default `recode_missings = TRUE` reads them per variable.
+* Rescaling equalises range, not variance. A 4-point and an 11-point item do not
+  contribute equally to a mean of the two.
+* Only countries present in both rounds can enter a change score.

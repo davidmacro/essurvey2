@@ -1,0 +1,330 @@
+---
+title: "Recording exactly which ESS data you analysed"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Recording exactly which ESS data you analysed}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+> **User story.** As the corresponding author of a paper using ESS data, I need a
+> record of exactly which data files, editions and DOIs produced my results, so
+> that I can cite them as the ESS asks and so that a reader can tell whether a
+> failure to reproduce my numbers is their mistake, my mistake, or a new edition.
+
+Catalogue output below is real, from a session run in July 2026. Your own run will
+differ, and the point of this vignette is that the difference is knowable.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## The problem with resolving DOIs at run time
+
+`essurvey2` hard-codes nothing. `ess_round(11)` asks the catalogue which data
+file is round 11's integrated file, and downloads whatever it is told. That is
+what makes a newly published round or a corrected edition appear without a package
+update — and it is also what makes the script's output a moving target.
+
+Editions are revised regularly. Every round in the series is past its first:
+
+```{r}
+ess_rounds()[, .(round, file_label, edition)]
+#>     round file_label edition
+#>     <int>     <char>  <char>
+#>  1:     1  ESS1e06_7     6.7
+#>  2:     2  ESS2e03_6     3.6
+#>  3:     3  ESS3e03_7     3.7
+#>  4:     4  ESS4e04_6     4.6
+#>  5:     5  ESS5e03_6     3.6
+#>  6:     6  ESS6e02_7     2.7
+#>  7:     7  ESS7e02_3     2.3
+#>  8:     8  ESS8e02_3     2.3
+#>  9:     9  ESS9e03_3     3.3
+#> 10:    10 ESS10e03_3     3.3
+#> 11:    11 ESS11e04_2     4.2
+```
+
+Round 1's data has been through six editions and seven sub-releases. Each edition
+has its own DOI, and a new one may add a country, correct a weight or fix a
+recode. So the same script, run a year apart, can legitimately produce different
+numbers. Without a record you cannot tell that from a bug.
+
+The fix is not to hard-code DOIs — that puts you on a stale edition indefinitely,
+and a DOI in a script gives no signal when a better one exists. The fix is to
+resolve the current edition, use it, and **write down what you got**.
+
+## A provenance record
+
+Everything needed is in the catalogue, and none of it requires downloading data.
+`ess_data_file_info()` gives the per-file detail:
+
+```{r}
+f <- ess_data_files(11, kind = "integrated")
+info <- ess_data_file_info(f$datafile_id, f$datafile_version)
+
+str(info, max.level = 1)
+#> Classes 'data.table' and 'data.frame':	1 obs. of  11 variables:
+#>  $ file_label      : chr "ESS11e04_2"
+#>  $ description     : chr "ESS11 - integrated file, edition 4.2"
+#>  $ edition         : chr "4.2"
+#>  $ doi             : chr "10.21338/ess11e04_2"
+#>  $ doi_url         : chr "https://doi.org/10.21338/ess11e04_2"
+#>  $ published       : chr "2026-07-02"
+#>  $ n_variables     : int 709
+#>  $ n_countries     : int 30
+#>  $ countries       :List of 1
+#>  $ datafile_id     : chr "242aaa39-3bbb-40f5-98bf-bfb1ce53d8ef"
+#>  $ datafile_version: int 179
+```
+
+`published` is the date that edition was released, which is the field that tells a
+future reader whether a newer one exists. `n_countries` and `countries` record the
+coverage you actually had:
+
+```{r}
+info$n_countries
+#> [1] 30
+
+info$countries[[1]]
+#> [1] "AT" "BE" "BG" "HR" ...
+```
+
+A helper worth keeping in a project's `R/` directory. It takes the rounds an
+analysis used and returns one row per file:
+
+```{r}
+ess_provenance <- function(rounds, kind = "integrated") {
+  files <- ess_data_files(rounds = rounds, kind = kind)
+
+  rbindlist(lapply(seq_len(nrow(files)), function(i) {
+    info <- ess_data_file_info(files$datafile_id[[i]], files$datafile_version[[i]])
+    data.table(
+      round = files$round[[i]],
+      file_label = info$file_label,
+      edition = info$edition,
+      doi = info$doi,
+      published = info$published,
+      n_variables = info$n_variables,
+      n_countries = info$n_countries,
+      countries = paste(sort(info$countries[[1]]), collapse = " ")
+    )
+  }))
+}
+
+prov <- ess_provenance(c(7, 11))
+prov[, .(round, file_label, edition, doi, published, n_countries)]
+```
+
+Write it out next to the results, and record the environment as well. The data is
+half of what makes a number reproducible; the code that read it is the other half:
+
+```{r}
+fwrite(prov, "output/ess-provenance.csv")
+
+writeLines(
+  c(
+    paste("essurvey2:", as.character(packageVersion("essurvey2"))),
+    paste("arrow:    ", as.character(packageVersion("arrow"))),
+    paste("R:        ", R.version.string),
+    paste("run:      ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
+  ),
+  "output/ess-session.txt"
+)
+```
+
+## One rough edge to know about
+
+The `doi` column of `ess_data_files()` is passed through from the catalogue
+without normalisation, and the catalogue is not entirely consistent. As of
+July 2026 one file of the 64 — round 7's alcohol module — carries its DOI as a
+URL, with a leading space:
+
+```{r}
+all_files <- ess_data_files()
+odd <- all_files[!grepl("^10\\.", doi)]
+odd[, .(round, file_label, doi)]
+#>    round file_label                                  doi
+#>    <int>     <char>                               <char>
+#> 1:     7 ESS7ALCe02  https://doi.org/10.21338/ess7alce02
+
+nchar(odd$doi)
+#> [1] 36
+```
+
+Downloading is unaffected — `ess_data()` normalises the DOI it is given, stripping
+a `https://doi.org/` prefix and surrounding whitespace, so the value works as it
+stands:
+
+```{r}
+ess_parse_doi(" https://doi.org/10.21338/ess7alce02")
+#> $prefix
+#> [1] "10.21338"
+#>
+#> $suffix
+#> [1] "ess7alce02"
+```
+
+What it breaks is anything that treats `doi` as a key or prints it as a citation.
+An exact-match filter silently returns nothing:
+
+```{r}
+all_files[doi == "10.21338/ess7alce02"]                  # zero rows
+all_files[trimws(doi) %like% "ess7alce02$"]              # one row
+```
+
+So normalise on the way into a provenance table, and the citation is clean and the
+joins work:
+
+```{r}
+canonical_doi <- function(x) {
+  x <- trimws(x)
+  sub("^https?://(dx\\.)?doi\\.org/", "", x, ignore.case = TRUE)
+}
+
+prov[, doi := canonical_doi(doi)]
+prov[, doi_url := paste0("https://doi.org/", doi)]
+```
+
+The same caution applies to the round 8 duplicate that `ess_data_files()` warns
+about — two files sharing one DOI, which no amount of local tidying can resolve:
+
+```{r}
+ess_data_files(8)
+#> Warning: The ESS catalogue gives 2 data files the same DOI "10.21338/ess8timee01".
+#> ✖ "ESS8TIMEe01" and "ESS8CFe03"
+#> ℹ Downloading it returns one file, which may not be the one you asked for.
+#> ℹ This is an error in the catalogue, not in essurvey2; report it to 'essdatasupport@sikt.no'.
+```
+
+If your analysis touches either file, record the warning alongside the provenance
+table and check the `name` column of what actually arrived. The package reports the
+ambiguity rather than picking a side, because picking wrong would hand you the
+wrong data without saying so.
+
+## Detecting an edition change
+
+Having written a provenance record, use it. Re-resolve the catalogue and compare
+against the file on disk:
+
+```{r}
+check_provenance <- function(path = "output/ess-provenance.csv") {
+  old <- fread(path, colClasses = "character")
+  new <- ess_provenance(as.integer(old$round))
+
+  cmp <- merge(
+    old[, .(round = as.integer(round), old_edition = edition, old_doi = doi)],
+    new[, .(round, new_edition = edition, new_doi = doi)],
+    by = "round"
+  )
+
+  cmp[, changed := old_edition != new_edition]
+  cmp
+}
+
+check_provenance()
+```
+
+`changed == TRUE` means the ESS has published a new edition since your run. That
+is not an error — it is the signal to re-run, compare, and decide whether the
+results moved enough to matter.
+
+Catalogue answers are memoised for the session, so a long-running session will not
+notice a mid-session publication. `ess_catalogue_refresh()` forgets them:
+
+```{r}
+ess_catalogue_refresh()
+ess_rounds()[, .(round, file_label, edition)]
+```
+
+## The cache is not a provenance record
+
+Downloads are cached on disk, keyed by DOI, format and missing-value treatment:
+
+```{r}
+ess_cache_list()
+ess_cache_dir()
+```
+
+The cache is why the second run of a script is fast, and it does keep the file that
+produced your results. But it is not a substitute for the provenance table, for
+two reasons.
+
+First, the cache key is the DOI, and a new edition has a new DOI. So a new edition
+does not overwrite the old file — it is downloaded alongside it. Your cache can
+hold both `10.21338/ess11e04_2` and its successor, and the filename is the only
+thing distinguishing them:
+
+```{r}
+ess_cache_list()[, .(file, size)]
+#>                                    file    size
+#> 1: 10.21338_ess11e04_2__recoded.parquet 12.4 MB
+```
+
+Second, `ess_cache_clear()` exists and gets used, and a cache directory is not
+something you would archive with a paper. Keep the CSV.
+
+If you want the exact file kept with the project rather than in a cache under the
+user's home directory, download it explicitly:
+
+```{r}
+ess_download_file("10.21338/ess11e04_2", path = "data-raw/ess11e04_2.parquet")
+
+# Re-read it later without touching the network.
+dt <- ess_read_file("data-raw/ess11e04_2.parquet",
+                    select = c("essround", "cntry", "anweight"))
+```
+
+Or move the whole cache somewhere the project controls:
+
+```{r}
+options(essurvey2.cache_dir = "data-raw/ess-cache")
+```
+
+## Citing the data
+
+The ESS asks that the data files an analysis uses be cited. The provenance table
+holds the fields a citation needs — file label, edition, DOI and publication date:
+
+```{r}
+prov[, sprintf("European Social Survey (%s). %s, ed. %s. Sikt. https://doi.org/%s",
+               substr(published, 1, 4), file_label, edition, doi)]
+```
+
+Check the ESS's current citation requirements at <https://ess.sikt.no> before
+submitting; the fields above are what this package can tell you, not a claim about
+the required format, which the ESS sets and revises.
+
+Cite the *data files*, not the study. The API only serves data file DOIs, and
+study-level DOIs are rejected — which is a useful reminder of which kind you are
+holding:
+
+```{r}
+tryCatch(
+  ess_data("10.21338/NSD-ESS10-2020"),
+  essurvey2_error_doi = function(e) conditionMessage(e)
+)
+```
+
+## What this vignette worked around
+
+* Nothing is hard-coded, so the edition a script gets depends on when it runs.
+  Record what you got; do not pin a DOI.
+* `published` in `ess_data_file_info()` is what dates your extract.
+* One of the 64 data file DOIs is served as a URL with a leading space. Downloads
+  cope; exact-match filters and citations do not. Normalise it.
+* Round 8 has two data files sharing one DOI. The package warns; the ambiguity is
+  upstream.
+* The cache keeps files but is not an archive — a new edition lands beside the old
+  one rather than replacing it, and `ess_cache_clear()` exists.
+* Catalogue answers are memoised per session; `ess_catalogue_refresh()` forgets
+  them.

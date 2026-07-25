@@ -28,6 +28,7 @@ Suggests:
     haven (>= 2.5.0),
     knitr,
     rmarkdown,
+    survey (>= 4.1),
     testthat (>= 3.0.0),
     withr
 VignetteBuilder: knitr
