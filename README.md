@@ -1,6 +1,7 @@
 # essurvey2
 
 <!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/essurvey2)](https://CRAN.R-project.org/package=essurvey2)
 <!-- badges: end -->
 
 Download data from the [European Social Survey](https://www.europeansocialsurvey.org/)
@@ -20,6 +21,13 @@ no longer works.
 
 ```r
 install.packages("essurvey2")
+```
+
+The development version:
+
+```r
+# install.packages("remotes")
+remotes::install_github("davidmacro/essurvey2")
 ```
 
 ## Configuration
@@ -264,7 +272,8 @@ returns each file's DOI and publication date for that purpose.
 
 The ESS API is in beta. It cannot serve the very largest data files; those still
 have to be downloaded from the portal. Feedback on the API itself goes to
-<essdatasupport@sikt.no>.
+<essdatasupport@sikt.no>; bugs in this package go to
+[the issue tracker](https://github.com/davidmacro/essurvey2/issues).
 
 `ess_data_files()` warns if the catalogue gives two data files the same DOI,
 which currently happens for round 8's contact forms and interview time data.

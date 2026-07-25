@@ -30,6 +30,14 @@ This is a new submission.
 metadata catalogue at <https://api.nsd.no/graphql>. It replaces the retired
 `essurvey` package, whose scraped download endpoints no longer exist.
 
+Source and issue tracker: <https://github.com/davidmacro/essurvey2>.
+
+The `Description` field names the API host in angle brackets rather than citing
+a publication, because the package documents a service rather than a method.
+The ESS asks that users cite the individual data files they download, and
+`ess_data_file_info()` returns each file's DOI and publication date for that
+purpose.
+
 ### Writing to the file system
 
 The package writes only to the session's temporary directory unless the user

@@ -11,6 +11,8 @@ Description: A client for the European Social Survey (ESS) data API at
     This package targets the API that replaced the web download endpoints
     used by the earlier 'essurvey' package, which no longer work.
 License: MIT + file LICENSE
+URL: https://github.com/davidmacro/essurvey2
+BugReports: https://github.com/davidmacro/essurvey2/issues
 Encoding: UTF-8
 Depends:
     R (>= 4.1.0)
