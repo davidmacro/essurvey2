@@ -2,6 +2,7 @@
 ^\.Rproj\.user$
 ^\.codegraph$
 ^\.github$
+^CLAUDE\.md$
 ^LICENSE\.md$
 ^cran-comments\.md$
 ^docs$
