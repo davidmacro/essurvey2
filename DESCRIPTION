@@ -1,0 +1,36 @@
+Package: essurvey2
+Title: Download Data from the European Social Survey API
+Version: 0.1.0
+Authors@R:
+    person("David", "Macro", , "david@dataim.nl", role = c("aut", "cre"))
+Description: A client for the European Social Survey (ESS) data API at
+    <https://api.ess.sikt.no>. Data files are discovered through the ESS
+    metadata catalogue and downloaded as Apache Parquet, then returned as
+    'data.table' objects. Rounds, countries, themes, data files and
+    variables can all be listed before any survey data is transferred.
+    This package targets the API that replaced the web download endpoints
+    used by the earlier 'essurvey' package, which no longer work.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
+Imports:
+    arrow (>= 9.0.0),
+    cli (>= 3.4.0),
+    data.table (>= 1.14.0),
+    httr2 (>= 1.0.0),
+    jsonlite,
+    rlang (>= 1.0.0),
+    stats,
+    tools,
+    utils
+Suggests:
+    haven (>= 2.5.0),
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    withr
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3

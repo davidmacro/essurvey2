@@ -1,0 +1,470 @@
+---
+title: "Getting data from the European Social Survey"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting data from the European Social Survey}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  # Every chunk below talks to the live ESS API, so none of them run at build
+  # time. The output shown is from a real session.
+  eval = FALSE
+)
+```
+
+This vignette walks through configuring the package, working out what data
+exists, downloading it, and handling the parts of the ESS that need a little
+care: missing values, value labels, and country selection.
+
+```{r setup}
+library(essurvey2)
+library(data.table)
+```
+
+## Configuring your user ID
+
+Every request for data carries a user ID, which the ESS uses to record download
+statistics. It is not a password and it does not authenticate you, but the API
+refuses requests without one.
+
+Get yours by logging in at <https://ess.sikt.no/en/api>. Then put it in your user
+`.Renviron` file, which `usethis::edit_r_environ()` opens:
+
+```
+ESS_USER_ID=your-user-id-here
+```
+
+Restart R afterwards — `.Renviron` is read only at startup. A system environment
+variable of the same name works identically, and is the better choice on a shared
+or containerised machine.
+
+For a single session, or to try the package out before deciding where to put the
+ID:
+
+```{r}
+ess_set_user_id("your-user-id-here")
+```
+
+`ess_config()` shows what the package resolved, with the ID masked so the output
+is safe to paste into a bug report:
+
+```{r}
+ess_config()
+#> ── essurvey2 configuration
+#> data API:  <https://api.ess.sikt.no>
+#> catalogue: <https://api.nsd.no/graphql>
+#> user ID:   "a1b2c3d4****************************" (from ESS_USER_ID)
+#> cache:     'C:/Users/you/AppData/Local/R/cache/R/essurvey2'
+```
+
+## Looking before you download
+
+An ESS integrated file is a few hundred thousand rows by seven hundred columns,
+so it pays to know what you are asking for. Everything in this section reads the
+metadata catalogue, which needs no user ID and transfers almost nothing.
+
+Start with the rounds:
+
+```{r}
+ess_rounds()[, .(round, file_label, edition, description)]
+#>     round file_label edition                                       description
+#>  1:     1  ESS1e06_7     6.7 ESS round 1 - 2002. Immigration, Citizen involve…
+#>  2:     2  ESS2e03_6     3.6 ESS round 2 - 2004. Health and care, Economic mo…
+#> ...
+#> 11:    11 ESS11e04_2     4.2 ESS round 11 - 2023. Social inequalities in heal…
+```
+
+Note the `edition` column. Editions are revised as the ESS corrects and extends
+its data, and each edition has its own DOI. This package always resolves the
+current one from the catalogue, which is why no DOI is hard-coded anywhere in it —
+and why hard-coding one in your own script is a bad idea.
+
+Countries, with the codes that appear in the data's `cntry` column:
+
+```{r}
+ess_countries()[1:5]
+#>    country_code country_name n_rounds          rounds
+#> 1:           AL      Albania        1               6
+#> 2:           AT      Austria       10 1,2,3,4,5,6,...
+#> ...
+
+ess_country_rounds("NL")[, .(round, file_label, doi)]
+```
+
+Themes tell you which rounds asked about what. Six are core themes, repeated
+every round; the rest are rotating modules:
+
+```{r}
+ess_themes()[is_core == FALSE, .(theme_name)]
+ess_theme_rounds("Justice")[, .(round, description)]
+```
+
+### Finding variables
+
+`ess_variables()` lists a data file's variables with their labels, which is how
+you find the names to pass to `select`:
+
+```{r}
+vars <- ess_variables(11)
+nrow(vars)
+#> [1] 709
+
+vars[grepl("trust", variable_label, ignore.case = TRUE),
+     .(variable_name, variable_label)]
+#>    variable_name                                         variable_label
+#> 1:       ppltrst Most people can be trusted or you can't be too careful
+#> 2:       trstprl                          Trust in country's parliament
+#> 3:       trstlgl                              Trust in the legal system
+#> ...
+```
+
+For one variable, `ess_variable_info()` gives the question as it was put to
+respondents, and what each code means:
+
+```{r}
+info <- ess_variable_info("ppltrst", round = 11)
+info$question
+#> [1] "Using this card, generally speaking, would you say that most people can
+#>      be trusted, or that you can't be too careful in dealing with people?"
+
+info$codes
+#>     value                      label is_missing
+#>  1:     0   You can't be too careful      FALSE
+#>  2:     1                          1      FALSE
+#> ...
+#> 12:    77                    Refusal       TRUE
+#> 13:    88                 Don't know       TRUE
+#> 14:    99                  No answer       TRUE
+```
+
+## Downloading a round
+
+```{r}
+dt <- ess_round(11, select = c("essround", "cntry", "idno", "agea", "gndr", "ppltrst"))
+#> ℹ Downloading "10.21338/ess11e04_2" as parquet, missing values recoded.
+#> ✔ Downloaded 12.4 MB to '…/essurvey2/10.21338_ess11e04_2__recoded.parquet'.
+
+dim(dt)
+#> [1] 50116     6
+class(dt)
+#> [1] "data.table" "data.frame"
+```
+
+`select` is worth using. Parquet is columnar, so only the requested columns are
+decoded — reading six of them takes a fraction of the time and memory that all
+709 would.
+
+Several rounds come back stacked, distinguished by `essround`:
+
+```{r}
+trend <- ess_round(9:11, select = c("essround", "cntry", "ppltrst", "pspwght"))
+
+trend[, .(trust = round(weighted.mean(ppltrst, pspwght, na.rm = TRUE), 2)),
+      by = essround][order(essround)]
+```
+
+Rounds are stacked with `fill = TRUE`, so a variable that does not exist in one
+of them is `NA` for that round's rows rather than an error.
+
+`ess_all_rounds()` fetches the lot. With `select` it is quite manageable; without
+it, expect a few hundred megabytes.
+
+```{r}
+everything <- ess_all_rounds(select = c("essround", "cntry", "ppltrst", "pspwght"))
+```
+
+### Caching
+
+The download above went to a cache directory. Asking again — in this session or
+next month — reads from disk:
+
+```{r}
+dt <- ess_round(11, select = c("essround", "cntry"))
+#> ℹ Using cached "10.21338/ess11e04_2" (12.4 MB).
+
+ess_cache_list()[, .(file, size)]
+#>                                    file    size
+#> 1: 10.21338_ess11e04_2__recoded.parquet 12.4 MB
+```
+
+The cache key covers the DOI, the format and the missing-value treatment, so
+`recode_missings = TRUE` and `FALSE` are separate entries rather than one
+overwriting the other.
+
+```{r}
+options(essurvey2.cache_dir = "D:/data/ess-cache")  # put it somewhere else
+options(essurvey2.cache_dir = FALSE)                # or switch it off
+ess_cache_clear()                                   # or empty it
+```
+
+## Missing values
+
+The ESS codes non-responses as out-of-range values, and the codes differ from
+variable to variable: `ppltrst` uses 77, 88 and 99, while `agea` uses 999. This
+is a trap for anyone who assumes a single convention.
+
+By default `essurvey2` asks the API to convert them, so they arrive as `NA`:
+
+```{r}
+dt <- ess_round(11, select = c("essround", "agea", "ppltrst"))
+max(dt$agea, na.rm = TRUE)
+#> [1] 90
+sum(is.na(dt$agea))
+#> [1] 393
+```
+
+Compare that with the original codes:
+
+```{r}
+raw <- ess_round(11, select = c("essround", "agea", "ppltrst"),
+                 recode_missings = FALSE)
+max(raw$agea)
+#> [1] 999
+sum(is.na(raw$agea))
+#> [1] 0
+```
+
+One quirk is worth knowing about. The API treats `recodeMissingValues` as a flag
+rather than a value, so *any* value switches recoding on —
+`recodeMissingValues=false` still recodes. The only way to turn it off is to omit
+the parameter, which is what `recode_missings = FALSE` does.
+
+To do the recoding locally instead — because you want the codes for some
+variables and `NA` for others, or want to see which codes were affected — use
+`ess_recode_missings()`. It reads each variable's own missing codes from the
+catalogue:
+
+```{r}
+ess_missing_codes(11, variables = c("agea", "gndr", "ppltrst"))
+#>    variable_name value         label
+#> 1:       ppltrst    77       Refusal
+#> 2:       ppltrst    88    Don't know
+#> 3:       ppltrst    99     No answer
+#> 4:          gndr     9     No answer
+#> 5:          agea   999 Not available
+
+ess_recode_missings(raw)
+#> ✔ Recoded 537 values to `NA` across 2 columns.
+```
+
+Because this follows `data.table` conventions, `raw` is modified **in place**.
+Pass `copy(raw)` if you want to keep the original. Note also that it recoded only
+two columns: `gndr`'s missing code, 9, does not actually occur in round 11.
+
+## Value labels
+
+Parquet files carry codes, not labels — a `gndr` of 1, not "Male". That differs
+from the earlier `essurvey` package, which read SPSS files with their labels
+attached. The labels live in the catalogue:
+
+```{r}
+ess_value_labels(11, variables = "gndr")
+#>    variable_name value     label is_missing
+#> 1:          gndr     1      Male      FALSE
+#> 2:          gndr     2    Female      FALSE
+#> 3:          gndr     9 No answer       TRUE
+```
+
+`ess_as_factor()` applies them, again in place:
+
+```{r}
+dt <- ess_round(11, select = c("essround", "cntry", "gndr"))
+ess_as_factor(dt, variables = "gndr")
+#> ✔ Converted 1 column to factor.
+
+dt[, .N, by = gndr]
+#>      gndr     N
+#> 1:   Male 23089
+#> 2: Female 27027
+```
+
+Only variables with a code list are converted, and codes flagged as missing
+become `NA` rather than a level — pass `keep_missing = TRUE` to keep them.
+Variables with more than `max_levels` codes are left alone, so a near-continuous
+variable does not silently become a factor with hundreds of levels.
+
+Think before converting a scale such as `ppltrst`: as a factor you can no longer
+take its mean.
+
+## Selecting a country
+
+`ess_country()` returns one country's respondents:
+
+```{r}
+nl <- ess_country("NL", rounds = 10:11, select = c("essround", "agea", "ppltrst"))
+#> ℹ Fetching 2 data files: "ESS10e03_3" and "ESS11e04_2".
+#> ✔ 3165 respondents from "NL" across 2 rounds.
+
+nl[, .(n = .N, trust = round(mean(ppltrst, na.rm = TRUE), 2)), by = essround]
+#>    essround    n trust
+#> 1:       10 1470  6.54
+#> 2:       11 1695  6.26
+```
+
+Be aware of what this does. The current API publishes integrated files only —
+there are no per-country downloads any more — so each round is fetched in full
+and then filtered on `cntry`. The cache means you pay for that once, and `select`
+keeps it small, but the first call transfers the whole round.
+
+Omitting `rounds` uses every round the country took part in, as reported by
+`ess_country_rounds()`. Asking for a round a country skipped warns rather than
+returning zero rows silently:
+
+```{r}
+ess_country("AL", rounds = 11, select = "essround")
+#> Warning: "AL" did not take part in ESS round 11.
+#> ℹ That round will contribute no rows.
+```
+
+## The other data files
+
+Each round publishes more than the integrated file. `ess_data_files()` shows what
+a round has, and `ess_file_kinds()` explains the names:
+
+```{r}
+ess_data_files(11)[, .(file_kind, file_label, doi, n_variables)]
+#>        file_kind    file_label                    doi n_variables
+#> 1:       alcohol ESS11ALCe02_1 10.21338/ess11alce02_1         753
+#> 2: contact_forms  ESS11CFe04_1  10.21338/ess11cfe04_1         247
+#> 3:    integrated    ESS11e04_2    10.21338/ess11e04_2         709
+#> 4:   interviewer ESS11INTe04_1 10.21338/ess11inte04_1          25
+```
+
+Round 10 introduced self-completion modes, which have their own integrated file:
+
+```{r}
+sc <- ess_round(10, kind = "self_completion", select = c("essround", "cntry"))
+```
+
+Anything not covered by `ess_round()` can be fetched straight by DOI:
+
+```{r}
+cf <- ess_data("10.21338/ess11cfe04_1")
+```
+
+Two kinds deserve a mention. **Sample design data** holds the design weights and
+clustering variables needed for correct standard errors — what the old package's
+`import_sddf_country()` fetched. Only some rounds publish it:
+
+```{r}
+ess_data_files(kind = "sample_design")[, .(round, file_label, doi)]
+#>    round    file_label                    doi
+#> 1:     7  ESS7SDDFe1_2  10.21338/ess7sddfe1_2
+#> 2:     8 ESS8SDDFe01_1 10.21338/ess8sddfe01_1
+
+sddf <- ess_data("10.21338/ess7sddfe1_2")
+names(sddf)
+#> [1] "name" "essround" "edition" "proddate" "cntry" "idno" "psu" "domain"
+#> [9] "stratum" "prob"
+```
+
+And some countries are not in an integrated file at all — because their fieldwork
+ran outside the round's window, or because they lack design weights — and are
+published as separate files:
+
+```{r}
+ess_data_files(kind = "country")[, .(round, file_country, description)]
+#>    round file_country                                             description
+#> 1:     2           IT       ESS2 - Italy country file from main questionnaire
+#> 2:     3           LV                       ESS3 - Latvia (no design weights)
+#> 3:     3           RO                      ESS3 - Romania (no design weights)
+#> 4:     4           AT  ESS4 - Austria (Fieldwork period 01.11.10 to 28.02.11)
+#> 5:     4           LT                    ESS4 - Lithuania (no design weights)
+#> 6:     5           AT ESS5 - Austria (fieldwork period 24.05.13 to 10.10.13)
+#> 7:     9           RO            ESS9 - Romania (participating on pilot basis)
+#> 8:     9           AL              ESS9 - Albania (interview quality issues)
+
+at5 <- ess_data("10.21338/ess5ate1_1")
+```
+
+This is worth knowing before concluding that a country is missing from a round.
+`ess_country("AT")` will not return round 5 Austria, because that data is not in
+the round 5 integrated file — it is in `ESS5ATe1_1`. The descriptions above say
+why each one was held out, and whether it is safe to pool with the rest is a
+judgement for you rather than this package.
+
+### When the catalogue contradicts itself
+
+A DOI should identify one file. In round 8 the catalogue currently gives the same
+DOI to the contact forms and to the interview time data, so `ess_data_files()`
+warns:
+
+```{r}
+ess_data_files(8)
+#> Warning: The ESS catalogue gives 2 data files the same DOI "10.21338/ess8timee01".
+#> ✖ "ESS8TIMEe01" and "ESS8CFe03"
+#> ℹ Downloading it returns one file, which may not be the one you asked for.
+```
+
+Downloading that DOI returns whichever file it really points at. This package
+reports the inconsistency rather than guessing, since guessing wrong would hand
+you the wrong data silently.
+
+## Other formats
+
+Parquet is the default and the fastest, but the API also serves CSV, SPSS and
+Stata. `sav` and `dta` are read with **haven**, which must be installed.
+
+```{r}
+csv <- ess_data("10.21338/ess11inte04_1", format = "csv")
+
+# Keep the SPSS file rather than reading it.
+path <- ess_download_file("10.21338/ess11e04_2", path = "ess11.sav", format = "sav")
+```
+
+## When something goes wrong
+
+Failures are raised as classed conditions, so they can be caught specifically:
+
+| Class | Meaning |
+|---|---|
+| `essurvey2_error_user_id` | no user ID configured, or the API rejected it |
+| `essurvey2_error_doi` | no such data file, or a study DOI was passed |
+| `essurvey2_error_server` | server-side failure; large files are also refused here |
+| `essurvey2_error_catalogue` | the metadata catalogue returned an error |
+| `essurvey2_error_offline` | the catalogue could not be reached |
+
+```{r}
+tryCatch(
+  ess_data("10.21338/NSD-ESS10-2020"),
+  essurvey2_error_doi = function(e) message("Not a data file DOI")
+)
+```
+
+Messages from the API include a request ID, which is what ESS support will ask
+for.
+
+Two things to know about the endpoint. It only accepts **data file** DOIs, not
+study-level ones such as `10.21338/NSD-ESS10-2020` — `ess_data_files()` returns
+the right kind. And it cannot serve the very largest files at all; those still
+have to come from the web portal.
+
+## Going further
+
+The metadata catalogue holds considerably more than this package wraps. `ess_gql()`
+sends arbitrary GraphQL queries, and the schema is introspectable:
+
+```{r}
+ess_gql("
+  query($id: ID!, $version: Int) {
+    search {
+      seriesMetadata(id: $id, version: $version, instance: PUBLISHED, agencyId: INT_ESSERIC) {
+        citation { abstract { en } }
+      }
+    }
+  }",
+  variables = ess_series_id()
+)
+```
+
+`ess_series()` lists the other series published by the ESS ERIC — the CRONOS web
+panels, ESS Multilevel Data, ICOS Cities — whose IDs can be used the same way.
+
+Catalogue answers are memoised for the session. `ess_catalogue_refresh()` forgets
+them, which is what you want if a new round is published while your session is
+open.
