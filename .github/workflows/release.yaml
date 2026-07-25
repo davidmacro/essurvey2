@@ -1,0 +1,139 @@
+# Build the source tarball once, check that exact file, and publish it.
+#
+# The single-job shape is deliberate. R CMD build generates inst/doc/*.html at
+# build time, so a tarball built twice in two environments is not byte-identical
+# even from the same commit. Building in one job and checking in another would
+# mean the file attached to the release was never the file that was checked.
+# Here the artifact, the checked file and the released file are one file.
+#
+# This does not submit to CRAN. Submission is a web form plus an email
+# confirmation loop with no API, so the maintainer uploads the artifact by hand.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          needs: check
+
+      # The classic footgun: tagging v0.1.1 while DESCRIPTION still says 0.1.0.
+      # Catch it before anything is published under the wrong name.
+      - name: Tag must match the DESCRIPTION version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          desc=$(grep '^Version:' DESCRIPTION | sed 's/^Version:[[:space:]]*//')
+          tag=${GITHUB_REF#refs/tags/v}
+          echo "DESCRIPTION: $desc"
+          echo "tag:         $tag"
+          if [ "$desc" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match DESCRIPTION Version $desc"
+            exit 1
+          fi
+
+      - name: Build the source tarball
+        run: |
+          R CMD build .
+          ls -l ./*.tar.gz
+          echo "TARBALL=$(ls ./*.tar.gz | head -1)" >> "$GITHUB_ENV"
+
+      # --as-cran on the built tarball, which is what CRAN policy asks for
+      # before uploading. --no-manual avoids needing a LaTeX install here; the
+      # PDF manual is covered by the local check and is not part of the artifact.
+      # R CMD check exits non-zero on ERROR but not on WARNING, so the exit code
+      # alone is too lenient. Do not fail the step here; the gate below reads
+      # the log instead.
+      - name: Check that exact tarball
+        run: R CMD check --as-cran --no-manual "$TARBALL" || true
+
+      # The authoritative line is "Status: ...", e.g. "Status: 1 WARNING, 2
+      # NOTEs". Individual findings appear as "* checking foo ... WARNING", so
+      # anchoring a grep at the start of a line would miss every one of them.
+      # NOTEs are reported but tolerated: a new submission always carries one,
+      # and R-devel can add platform notes that should not block a release.
+      - name: Fail on error or warning
+        run: |
+          log=essurvey2.Rcheck/00check.log
+          if [ ! -f "$log" ]; then
+            echo "::error::No 00check.log; the check did not run"
+            exit 1
+          fi
+          # Slow steps are annotated with a timing, e.g.
+          #   * checking CRAN incoming feasibility ... [21s] NOTE
+          # so the optional bracket has to be allowed for or every timed
+          # finding is missed.
+          finding='\.\.\. (\[[^]]*\] )?(ERROR|WARNING|NOTE)$'
+          echo "--- findings ---"
+          grep -E "$finding" "$log" || echo "(none)"
+          status=$(grep -E '^Status:' "$log" | tail -1)
+          echo "--- $status ---"
+          case "$status" in
+            *ERROR*|*WARNING*)
+              echo "::error::$status"
+              echo "--- detail ---"
+              grep -E -A 15 "$finding" "$log" | grep -vE '\.\.\. (\[[^]]*\] )?(OK|NONE)$'
+              exit 1
+              ;;
+          esac
+
+      - name: Show what is inside the tarball
+        run: tar -tzf "$TARBALL"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: ${{ env.TARBALL }}
+          if-no-files-found: error
+
+      # gh is preinstalled on the runner, so this needs no third-party action.
+      # The notes go via a heredoc and --notes-file rather than an escaped
+      # --notes argument: the body is markdown containing backticks and quotes,
+      # which is painful and easy to get wrong inside a double-quoted shell word.
+      - name: Attach the tarball to a GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          file=$(basename "$TARBALL")
+          cat > notes.md <<NOTES
+          Source tarball built by \`R CMD build\` and checked with
+          \`R CMD check --as-cran\` in the same job, so the attached file is
+          exactly the file that was checked.
+
+          Install this exact version:
+
+          \`\`\`r
+          install.packages(
+            "$SERVER/$REPO/releases/download/$tag/$file",
+            repos = NULL, type = "source"
+          )
+          \`\`\`
+
+          See NEWS.md for what changed.
+          NOTES
+          gh release create "$tag" "$TARBALL" --title "$tag" --notes-file notes.md
