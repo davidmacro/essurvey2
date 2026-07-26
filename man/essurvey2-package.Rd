@@ -68,6 +68,14 @@ the metadata catalogue (\code{\link[=ess_variables]{ess_variables()}}), not in t
 }
 }
 
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/davidmacro/essurvey2}
+  \item Report bugs at \url{https://github.com/davidmacro/essurvey2/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: David Macro \email{david@dataim.nl} [copyright holder]
 
