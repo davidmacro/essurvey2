@@ -33,8 +33,14 @@
 #' path <- ess_download_file("10.21338/ess6e02_6")
 #' file.size(path)
 #'
-#' # Keep the SPSS file instead, in a directory of your choosing.
-#' ess_download_file("10.21338/ess6e02_6", path = "ess6.sav", format = "sav")
+#' # Keep the SPSS file instead, in a directory of your choosing. Anywhere
+#' # writable will do; tempdir() is used here so the example leaves nothing
+#' # behind.
+#' ess_download_file(
+#'   "10.21338/ess6e02_6",
+#'   path = file.path(tempdir(), "ess6.sav"),
+#'   format = "sav"
+#' )
 #' }
 #'
 #' @export

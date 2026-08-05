@@ -126,10 +126,17 @@ prov[, .(round, file_label, edition, doi, published, n_countries)]
 ```
 
 Write it out next to the results, and record the environment as well. The data is
-half of what makes a number reproducible; the code that read it is the other half:
+half of what makes a number reproducible; the code that read it is the other half.
+
+Everything below writes into `out_dir`. This vignette points it at the session's
+temporary directory so that running the code leaves nothing behind; in your own
+project, point it at the output folder you archive with the paper:
 
 ```{r}
-fwrite(prov, "output/ess-provenance.csv")
+out_dir <- tempdir()          # your project:  out_dir <- "output"
+prov_csv <- file.path(out_dir, "ess-provenance.csv")
+
+fwrite(prov, prov_csv)
 
 writeLines(
   c(
@@ -138,7 +145,7 @@ writeLines(
     paste("R:        ", R.version.string),
     paste("run:      ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
   ),
-  "output/ess-session.txt"
+  file.path(out_dir, "ess-session.txt")
 )
 ```
 
@@ -217,7 +224,7 @@ Having written a provenance record, use it. Re-resolve the catalogue and compare
 against the file on disk:
 
 ```{r}
-check_provenance <- function(path = "output/ess-provenance.csv") {
+check_provenance <- function(path) {
   old <- fread(path, colClasses = "character")
   new <- ess_provenance(as.integer(old$round))
 
@@ -231,7 +238,7 @@ check_provenance <- function(path = "output/ess-provenance.csv") {
   cmp
 }
 
-check_provenance()
+check_provenance(prov_csv)
 ```
 
 `changed == TRUE` means the ESS has published a new edition since your run. That
@@ -274,20 +281,21 @@ Second, `ess_cache_clear()` exists and gets used, and a cache directory is not
 something you would archive with a paper. Keep the CSV.
 
 If you want the exact file kept with the project rather than in a cache under the
-user's home directory, download it explicitly:
+user's home directory, download it explicitly. Again `out_dir` stands in for the
+folder you archive — swap in `"data-raw"` or wherever the project keeps its inputs:
 
 ```{r}
-ess_download_file("10.21338/ess11e04_2", path = "data-raw/ess11e04_2.parquet")
+parquet <- file.path(out_dir, "ess11e04_2.parquet")
+ess_download_file("10.21338/ess11e04_2", path = parquet)
 
 # Re-read it later without touching the network.
-dt <- ess_read_file("data-raw/ess11e04_2.parquet",
-                    select = c("essround", "cntry", "anweight"))
+dt <- ess_read_file(parquet, select = c("essround", "cntry", "anweight"))
 ```
 
 Or move the whole cache somewhere the project controls:
 
 ```{r}
-options(essurvey2.cache_dir = "data-raw/ess-cache")
+options(essurvey2.cache_dir = file.path(out_dir, "ess-cache"))
 ```
 
 ## Citing the data

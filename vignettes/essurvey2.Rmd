@@ -413,8 +413,13 @@ Stata. `sav` and `dta` are read with **haven**, which must be installed.
 ```{r}
 csv <- ess_data("10.21338/ess11inte04_1", format = "csv")
 
-# Keep the SPSS file rather than reading it.
-path <- ess_download_file("10.21338/ess11e04_2", path = "ess11.sav", format = "sav")
+# Keep the SPSS file rather than reading it. Any writable directory will do;
+# tempdir() is used here so the vignette leaves nothing behind.
+path <- ess_download_file(
+  "10.21338/ess11e04_2",
+  path = file.path(tempdir(), "ess11.sav"),
+  format = "sav"
+)
 ```
 
 ## When something goes wrong
