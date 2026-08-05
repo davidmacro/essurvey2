@@ -1,3 +1,32 @@
+## Resubmission
+
+This is a resubmission. Both points raised in the review have been addressed.
+
+* **Software, package and API names are now in single quotes in `Title` and
+  `Description`.** `Title` reads "Download Data from the 'European Social
+  Survey' API", and `Description` quotes `'European Social Survey'`, `'ESS'`
+  and `'Apache Parquet'` alongside the `'data.table'` and `'essurvey'` that
+  were already quoted. Spelling and case follow each project's own. The same
+  wording in the package-level help page (`?essurvey2`) was updated to match.
+
+* **Nothing writes to the user's home filespace by default, and no example,
+  vignette or test writes to `getwd()` or the package directory.** The one
+  example that did — `ess_download_file()`, which wrote `"ess6.sav"` to the
+  working directory — now writes to `tempdir()`. Two vignettes did the same
+  and were changed the same way: `essurvey2.Rmd` writes its SPSS file to
+  `tempdir()`, and `reproducible-provenance.Rmd` routes every write through
+  one `out_dir <- tempdir()`, noting where a reader would point it in their
+  own project. The `check_provenance()` helper defined in that vignette had a
+  default `path = "output/ess-provenance.csv"`; the default is gone and `path`
+  is now required. The tests already wrote only to `withr::local_tempdir()`
+  and `withr::local_tempfile()`.
+
+  No exported function has a writable default path: `ess_download_file(path =)`
+  defaults to `NULL`, which selects the cache or a `tempfile()` as described
+  under "Writing to the file system" below.
+
+The version is unchanged at 0.1.0, as the package has not yet been on CRAN.
+
 ## Test environments
 
 * local: Windows 11 x64 (build 26200), R 4.5.2 (2025-10-31 ucrt), x86_64-w64-mingw32
