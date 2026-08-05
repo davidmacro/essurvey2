@@ -1,8 +1,8 @@
-#' essurvey2: download data from the European Social Survey API
+#' essurvey2: download data from the 'European Social Survey' API
 #'
-#' `essurvey2` is a client for the European Social Survey (ESS) data API at
-#' <https://api.ess.sikt.no>. It discovers what is published through the ESS
-#' metadata catalogue, downloads data files as Apache Parquet, and returns
+#' `essurvey2` is a client for the 'European Social Survey' ('ESS') data API at
+#' <https://api.ess.sikt.no>. It discovers what is published through the 'ESS'
+#' metadata catalogue, downloads data files as 'Apache Parquet', and returns
 #' [data.table::data.table] objects.
 #'
 #' @section Configuration:

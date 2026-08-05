@@ -4,11 +4,11 @@
 \name{essurvey2-package}
 \alias{essurvey2}
 \alias{essurvey2-package}
-\title{essurvey2: download data from the European Social Survey API}
+\title{essurvey2: download data from the 'European Social Survey' API}
 \description{
-\code{essurvey2} is a client for the European Social Survey (ESS) data API at
-\url{https://api.ess.sikt.no}. It discovers what is published through the ESS
-metadata catalogue, downloads data files as Apache Parquet, and returns
+\code{essurvey2} is a client for the 'European Social Survey' ('ESS') data API at
+\url{https://api.ess.sikt.no}. It discovers what is published through the 'ESS'
+metadata catalogue, downloads data files as 'Apache Parquet', and returns
 \link[data.table:data.table]{data.table::data.table} objects.
 }
 \section{Configuration}{
